@@ -84,6 +84,9 @@ val eval_nested : ?table:('a table) ->
     not satisfy the given predicate. *)
 val forget : 'a table -> (int -> int -> bool) -> unit
 
+(** Destruct one layer of the path expression *)
+val destruct : 'a t -> 'a t open_pathexpr
+
 (** {1 Omega path expressions} *)
 
 (** An omega path expression for a graph [G] is an omega regular

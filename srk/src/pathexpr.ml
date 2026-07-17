@@ -102,6 +102,18 @@ let mk_omega pe x = match x.obj with
   | _ -> HC.hashcons pe (Omega x)
 let mk_omega_add = mk_add
 let mk_omega_mul = mk_mul
+
+let destruct pe =
+  match pe.obj with
+  | Edge (u, v) -> `Edge (u, v)
+  | Mul (p1, p2) -> `Mul (p1, p2)
+  | Add (p1, p2) -> `Add (p1, p2)
+  | Star p -> `Star p
+  | One -> `One
+  | Zero -> `Zero
+  | Omega _ -> assert false
+  | Segment _ -> assert false
+
 let promote x = x
 let promote_omega x = x
 

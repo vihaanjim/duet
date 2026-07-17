@@ -12,6 +12,7 @@ module Make
     (Var : sig
        type t
        val pp : Format.formatter -> t -> unit
+       val show : t -> string
        val typ : t -> typ_term
        val compare : t -> t -> int
        val symbol_of : t -> symbol
@@ -28,6 +29,7 @@ module Make
        val transform : t -> (var * C.t term) BatEnum.t
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> C.t term
+       val defines : t -> var list
        val assume : C.t formula -> t
        val mul : t -> t -> t
        val add : t -> t -> t
@@ -35,6 +37,7 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
+       val domain : (C.t Iteration.exp_op) ref
      end) : sig
 
   type vertex = int
@@ -43,6 +46,7 @@ module Make
   type query = T.t WeightedGraph.RecGraph.weight_query
 
   module VarSet : BatSet.S with type elt = Var.t
+  module VarMap : BatMap.S with type key = Var.t
 
   (** Create an empty transition system. *)
   val empty : t
@@ -67,6 +71,8 @@ module Make
   (** Over-approximate the sum of the weights of all infinite paths
      starting at a given vertex. *)
   val omega_path_weight : query -> (transition,'b) Pathexpr.omega_algebra -> 'b
+
+  val path_formula : t -> Pathexpr.nested Pathexpr.t -> C.t Formula.t * symbol VarMap.t
 
   (** Project out local variables from each transition that are referenced
       only by that transition. *)
