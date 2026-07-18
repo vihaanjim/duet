@@ -72,7 +72,7 @@ module Make
      starting at a given vertex. *)
   val omega_path_weight : query -> (transition,'b) Pathexpr.omega_algebra -> 'b
 
-  val path_formula : t -> Pathexpr.nested Pathexpr.t -> C.t Formula.t * symbol VarMap.t
+  val path_formula : t -> vertex -> vertex -> C.t Formula.t * symbol VarMap.t
 
   (** Project out local variables from each transition that are referenced
       only by that transition. *)

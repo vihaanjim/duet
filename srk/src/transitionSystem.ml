@@ -53,19 +53,20 @@ module Make
 
   type query = T.t WG.RecGraph.weight_query
 
+  let mk_rg ts =
+    WG.fold_vertex
+      (fun v rg -> WG.RecGraph.add_vertex rg v)
+      ts
+      (WG.RecGraph.empty ())
+    |> WG.fold_edges (fun (u, w, v) rg ->
+           match w with
+           | Call (en,ex) ->
+              WG.RecGraph.add_call_edge rg u (en,ex) v
+           | Weight _ -> WG.RecGraph.add_edge rg u v)
+         ts
+  
   let mk_query ?(delay=1) ts source dom =
-    let rg =
-      WG.fold_vertex
-        (fun v rg -> WG.RecGraph.add_vertex rg v)
-        ts
-        (WG.RecGraph.empty ())
-      |> WG.fold_edges (fun (u, w, v) rg ->
-             match w with
-             | Call (en,ex) ->
-                WG.RecGraph.add_call_edge rg u (en,ex) v
-             | Weight _ -> WG.RecGraph.add_edge rg u v)
-           ts
-    in
+    let rg = mk_rg ts in
     let algebra = function
       | `Edge (u,v) ->
          begin match WG.edge_weight ts u v with
@@ -96,7 +97,7 @@ module Make
 
   let srk = C.context
 
-  let path_formula ts expr =
+  let path_formula ts src tgt =
     (* Find the transition formula attached to some edge *)
     let wt (u, v) = match WG.edge_weight ts u v with
       | Weight w -> w
@@ -151,7 +152,13 @@ module Make
         HT.add table (pe, l, u) res ;
         res
       else
-        let addl = VarMap.union (fun _ a b -> Some (a + b)) in
+        let addl =
+          VarMap.merge
+            (fun _ a b -> match a, b with
+                          | Some a, Some b -> Some (a + b)
+                          | Some _, None -> a
+                          | _ -> b)
+        in
         let var t v = match VarMap.find_opt v t with
           | Some i -> var_i_symbol v i
           | None -> Var.symbol_of v
@@ -175,17 +182,11 @@ module Make
                T.transform tr
                |> BatEnum.map
                     (fun (v, term) ->
-                      let r = 
-                        if VarMap.is_empty l then term
-                        else (substitute_map srk pre_subst_map term)
-                      in
-                      Term.set_expr srk (mk_const srk (post v)) r)
+                      substitute_map srk pre_subst_map term
+                      |> Term.set_expr srk (mk_const srk (post v)))
                |> BatList.of_enum
              in
-             let guard =
-               if VarMap.is_empty l then T.guard tr
-               else T.guard tr |> substitute_map srk pre_subst_map
-             in
+             let guard = T.guard tr |> substitute_map srk pre_subst_map in
              mk_and srk (guard::assigns)
           | `Mul (p1, p2) ->
              (* l + L(p1) - the intersection point.
@@ -197,7 +198,7 @@ module Make
              let f1 = f p1 l u and f2 = f p2 l u in
              mk_or srk [f1 ; f2]
           | `Star p' when length p' <> None ->
-             let l' = VarMap.map ((+) 1) l in
+             let l' = addl l (Option.get (length pe)) in
              let u' = addl l' (Option.get (length p')) in
              let f' = f p' l' u' in
              logf ~level:`warn
@@ -255,8 +256,12 @@ module Make
           | _ -> assert false (* todo *)
         in
         HT.add table (pe, l, u) res ;
+        Printf.printf "%s:\n%s\n\n" (Pathexpr.show pe) (Formula.show srk res) ;
         res
     in
+    let rg = mk_rg ts in
+    let query = WG.RecGraph.mk_query rg src in
+    let expr = WG.RecGraph.pathexpr query tgt in
     match (length expr) with
     | Some u -> (f expr VarMap.empty u, VarMap.map symbol_of_int u)
     | None -> (mk_false srk, VarMap.empty)
