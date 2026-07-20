@@ -31,6 +31,7 @@ module Make
        type t
        type var = Var.t
        val pp : Format.formatter -> t -> unit
+       val construct : C.t formula -> (var * C.t term) list -> t
        val guard : t -> C.t formula
        val transform : t -> (var * C.t term) BatEnum.t
        val mem_transform : var -> t -> bool
@@ -43,7 +44,6 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
-       val domain : (C.t Iteration.exp_op) ref
      end)
 = struct
 
@@ -108,36 +108,32 @@ module Make
        expression *)
     let length_table = Pathexpr.mk_table () in
     let length =
-      let pair_map f = function
-        | Some s, Some t ->
-           Some (VarMap.union (fun _ a b -> Some (f a b)) s t)
-        | _ -> None
-      in
       Pathexpr.eval_nested
         ~table:length_table
         ~algebra:(fun x ->
+          let union f = VarMap.union (fun _ a b -> Some (f a b)) in
           match x with
           | `Edge e ->
              let w = wt e in
-             Some (T.defines w
-                   |> BatList.enum
-                   |> BatEnum.map (fun v -> (v, 1))
-                   |> VarMap.of_enum)
-          | `Mul p -> pair_map (+) p
-          | `Add p -> pair_map Stdlib.Int.max p
-          | `Zero -> None
-          | `Star l ->
-             Some (Option.value ~default:VarMap.empty l
-                   |> VarMap.map (fun _ -> 1))
-          | `One -> Some VarMap.empty
-          | `Segment _ -> assert false
+             T.defines w
+             |> BatList.enum
+             |> BatEnum.map (fun v -> (v, 1))
+             |> VarMap.of_enum
+          | `Mul (l1, l2) -> union (+) l1 l2
+          | `Add (l1, l2) -> union Stdlib.Int.max l1 l2
+          | `Star l -> VarMap.map (fun _ -> 1) l
+          | `One -> VarMap.empty
+          | `Zero | `Segment _ -> assert false
         )
     in
     (* Canonical name for the ith version of a variable *)
-    let var_i_symbol v =
-      Memo.memo (fun i ->
-          mk_symbol srk ~name:(Var.show v ^ "$" ^ string_of_int i)
-            (Var.typ v :> typ))
+    let var_i_symbol =
+      Memo.memo (fun v i ->
+          if i <> 0 then
+            mk_symbol srk
+              ~name:(Var.show v ^ string_of_int i)
+              (Var.typ v :> typ)
+          else Var.symbol_of v)
     in
     (* Memo for triples (PE, l, u) *)
     (* TODO: find a way of using hashconsing implementation! *)
@@ -147,113 +143,57 @@ module Make
     let rec f pe l u =
       if HT.mem table (pe, l, u) then
         HT.find table (pe, l, u)
-      else if length pe = None then
-        let res = mk_false srk in
-        HT.add table (pe, l, u) res ;
-        res
       else
-        let addl =
-          VarMap.merge
-            (fun _ a b -> match a, b with
-                          | Some a, Some b -> Some (a + b)
-                          | Some _, None -> a
-                          | _ -> b)
-        in
-        let var t v = match VarMap.find_opt v t with
-          | Some i -> var_i_symbol v i
-          | None -> Var.symbol_of v
-        in
-        let post = var u in
-        let pre_subst_map =
-          VarMap.fold
-            (fun v i ->
-              Symbol.Map.add (Var.symbol_of v)
-                (mk_const srk (var_i_symbol v i)))
-            l
-            Symbol.Map.empty
+        (* todo: only include variables that are needed *)
+        let addv = VarMap.union (fun _ a b -> Some (a + b)) in
+        let skolemize tr =
+          let pre_subst =
+            VarMap.fold (fun v i ->
+                Symbol.Map.add (Var.symbol_of v) (mk_const srk (var_i_symbol v i)))
+              l
+              Symbol.Map.empty
+          in
+          let post_defs =
+            T.transform tr
+            |> BatEnum.map (fun (v, t) ->
+                   Term.set_expr srk
+                     (mk_const srk (var_i_symbol v (VarMap.find v u)))
+                     (substitute_map srk pre_subst t))
+            |> BatList.of_enum
+          in
+          mk_and srk ((substitute_map srk pre_subst (T.guard tr))::post_defs)
+          |> rewrite srk ~up:(SrkSimplify.simplify_terms_rewriter srk % Nonlinear.simplify_terms_rewriter srk)
         in
         let res =
           match Pathexpr.destruct pe with
-          | `Edge e ->
-             let tr = wt e in
-             (* Transform tr into a formula that uses the
-                correct variable copies *)
-             let assigns =
-               T.transform tr
-               |> BatEnum.map
-                    (fun (v, term) ->
-                      substitute_map srk pre_subst_map term
-                      |> Term.set_expr srk (mk_const srk (post v)))
-               |> BatList.of_enum
-             in
-             let guard = T.guard tr |> substitute_map srk pre_subst_map in
-             mk_and srk (guard::assigns)
+          | `Edge e -> skolemize (wt e)
           | `Mul (p1, p2) ->
-             (* l + L(p1) - the intersection point.
-                Since L(pe) <> -\infty, L(p1) <> -\infty. *)
-             let mid = addl l (Option.get (length p1)) in
-             let f1 = f p1 l mid and f2 = f p2 mid u in
-             mk_and srk [f1 ; f2]
-          | `Add (p1, p2) ->
-             let f1 = f p1 l u and f2 = f p2 l u in
-             mk_or srk [f1 ; f2]
-          | `Star p' when length p' <> None ->
-             let l' = addl l (Option.get (length pe)) in
-             let u' = addl l' (Option.get (length p')) in
+             let mid = addv l (length p1) in
+             mk_and srk [f p1 l mid ; f p2 mid u]
+          | `Add (p1, p2) -> mk_or srk [f p1 l u ; f p2 l u]
+          | `Star p' ->
+             let l' = addv l (length pe) in
+             let u' = addv l' (length p') in
              let f' = f p' l' u' in
-             logf ~level:`warn
-               "Approximating transitive closure:@.  @[<v 0>%a@]"
-               (Formula.pp srk) f';
-             (* Identify pre/post states (variables that change
-                between l' and u') *)
-             let var_pairs = 
-               VarMap.merge
-                 (fun v li ui ->
-                   match li, ui with
-                   | Some li, Some ui when li <> ui ->
-                      Some (var_i_symbol v li, var_i_symbol v ui)
-                   | None, Some ui ->
-                      Some (Var.symbol_of v, var_i_symbol v ui)
-                   | Some _, None -> assert false
-                   | _ -> None
-                 )
-                 l' u'
+             (* Convert to T.t *)
+             let transform =
+               VarMap.fold (fun v i l -> (v, (mk_const srk (var_i_symbol v i)))::l)
+                 u'
+                 []
              in
-             (* Convert to a transition formula *)
-             let tf =
-               TransitionFormula.make
-                 ~exists:(fun sym ->
-                   match Var.of_symbol sym with
-                   | Some var ->
-                      begin match VarMap.find_opt var var_pairs with
-                      | Some (v, v') -> v = sym || v' = sym
-                      | None -> true
-                      end
-                   | None -> true)
-                 f'
-                 (var_pairs |> VarMap.values |> BatList.of_enum)
-             in
-             (* Compute closure *)
-             let solver = Iteration.Solver.make srk tf in
-             let closure = Iteration.closure !T.domain solver in
-             logf ~level:`warn "Approx TC:@.  @[<v 0>%a@]"
-               (Formula.pp srk) closure;
-             (* Substitute [l'->l, u'->u] *)
-             let star_map =
-               VarMap.fold
-                 (fun v (pre, post) map ->
-                   map
-                   |> Symbol.Map.add pre
-                        (mk_const srk
-                           (match VarMap.find_opt v l with
-                           | Some i -> symbol_of_int i
-                           | None -> Var.symbol_of v))
-                   |> Symbol.Map.add post (mk_const srk pre))
-                 var_pairs
+             let subst =
+               VarMap.fold (fun v i ->
+                   Symbol.Map.add (var_i_symbol v i)
+                     (mk_const srk (Var.symbol_of v)))
+                 l'
                  Symbol.Map.empty
              in
-             substitute_map srk star_map closure
-          | _ -> assert false (* todo *)
+             let tr = T.construct (substitute_map srk subst f') transform in
+             (* Compute closure *)
+             let closure = T.star tr in
+             (* Convert back to plain formula *)
+             skolemize closure
+          | `Zero | `One -> assert false (* todo *)
         in
         HT.add table (pe, l, u) res ;
         Printf.printf "%s:\n%s\n\n" (Pathexpr.show pe) (Formula.show srk res) ;
@@ -262,9 +202,8 @@ module Make
     let rg = mk_rg ts in
     let query = WG.RecGraph.mk_query rg src in
     let expr = WG.RecGraph.pathexpr query tgt in
-    match (length expr) with
-    | Some u -> (f expr VarMap.empty u, VarMap.map symbol_of_int u)
-    | None -> (mk_false srk, VarMap.empty)
+    let u = length expr in
+    (f expr VarMap.empty u, VarMap.map symbol_of_int u)
 
   let label_algebra =
     let add x y = match x, y with

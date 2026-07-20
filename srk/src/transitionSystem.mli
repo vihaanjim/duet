@@ -25,6 +25,7 @@ module Make
        type t
        type var = Var.t
        val pp : Format.formatter -> t -> unit
+       val construct : C.t formula -> (var * C.t term) list -> t
        val guard : t -> C.t formula
        val transform : t -> (var * C.t term) BatEnum.t
        val mem_transform : var -> t -> bool
@@ -37,7 +38,6 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
-       val domain : (C.t Iteration.exp_op) ref
      end) : sig
 
   type vertex = int
