@@ -127,13 +127,13 @@ module Make
         )
     in
     (* Canonical name for the ith version of a variable *)
-    let var_i_symbol =
-      Memo.memo (fun v i ->
-          if i <> 0 then
-            mk_symbol srk
-              ~name:(Var.show v ^ string_of_int i)
-              (Var.typ v :> typ)
-          else Var.symbol_of v)
+    let _var_i_symbol =
+      Memo.memo (fun (v, i) ->
+          mk_symbol srk
+            ~name:(Var.show v ^ string_of_int i)
+            (Var.typ v :> typ))
+    in
+    let var_i_symbol v i = _var_i_symbol (v, i)
     in
     (* Memo for triples (PE, l, u) *)
     (* TODO: find a way of using hashconsing implementation! *)
@@ -177,7 +177,7 @@ module Make
              let f' = f p' l' u' in
              (* Convert to T.t *)
              let transform =
-               VarMap.fold (fun v i l -> (v, (mk_const srk (var_i_symbol v i)))::l)
+               VarMap.fold (fun v i -> List.cons (v, (mk_const srk (var_i_symbol v i))))
                  u'
                  []
              in
