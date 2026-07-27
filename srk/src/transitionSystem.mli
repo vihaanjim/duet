@@ -30,6 +30,7 @@ module Make
        val transform : t -> (var * C.t term) BatEnum.t
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> C.t term
+       val uses : t -> var list
        val defines : t -> var list
        val assume : C.t formula -> t
        val mul : t -> t -> t
@@ -38,12 +39,13 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
+       val domain : (C.t Iteration.exp_op) ref
      end) : sig
 
   type vertex = int
   type transition = T.t
   type t = (transition label) WeightedGraph.t
-  type query = T.t WeightedGraph.RecGraph.weight_query
+  type query
 
   module VarSet : BatSet.S with type elt = Var.t
   module VarMap : BatMap.S with type key = Var.t
@@ -72,7 +74,7 @@ module Make
      starting at a given vertex. *)
   val omega_path_weight : query -> (transition,'b) Pathexpr.omega_algebra -> 'b
 
-  val path_formula : t -> vertex -> vertex -> C.t Formula.t * symbol VarMap.t
+  (* val path_formula : t -> vertex -> vertex -> transition *)
 
   (** Project out local variables from each transition that are referenced
       only by that transition. *)

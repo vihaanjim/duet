@@ -1173,7 +1173,7 @@ let resource_bound_analysis file =
       RG.blocks rg |> BatEnum.iter (fun procedure ->
           let entry = (RG.block_entry rg procedure).did in
           let exit = (RG.block_exit rg procedure).did in
-          let summary = WG.RecGraph.call_weight query (entry, exit) in
+          let summary = TS.call_weight query (entry, exit) in
           if K.mem_transform cost summary then begin
             logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
             (* replace cost with 0, add constraint cost = rhs *)

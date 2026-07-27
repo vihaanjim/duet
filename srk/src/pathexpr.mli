@@ -85,7 +85,7 @@ val eval_nested : ?table:('a table) ->
 val forget : 'a table -> (int -> int -> bool) -> unit
 
 (** Destruct one layer of the path expression *)
-val destruct : 'a t -> 'a t open_pathexpr
+val destruct : 'a t -> 'a t open_nested_pathexpr
 
 (** {1 Omega path expressions} *)
 
