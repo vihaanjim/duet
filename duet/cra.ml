@@ -604,96 +604,96 @@ type klabel = K.t label [@@deriving ord]
 
 module TS = TransitionSystem.Make(Ctx)(V)(K)
 
-module TransitionDom = struct
-  type weight = K.t
-  type abstract_weight = K.t
-  let concretize x = x
-  let abstract x = x
-  let equal = K.equal
-  let widen = K.widen
-end
+(* module TransitionDom = struct *)
+(*   type weight = K.t *)
+(*   type abstract_weight = K.t *)
+(*   let concretize x = x *)
+(*   let abstract x = x *)
+(*   let equal = K.equal *)
+(*   let widen = K.widen *)
+(* end *)
 
 
-module MonotoneDom = struct
-  open Syntax
-  module Sign = Abstract.Sign
-  module SymbolSet = Syntax.Symbol.Set
-  type weight = K.t
-  module VS = Linear.QQVectorSpace
-  type abstract_weight = (symbol * symbol) list * Ctx.t Sign.t * VS.t
-  let man = Polka.manager_alloc_equalities ()
+(* module MonotoneDom = struct *)
+(*   open Syntax *)
+(*   module Sign = Abstract.Sign *)
+(*   module SymbolSet = Syntax.Symbol.Set *)
+(*   type weight = K.t *)
+(*   module VS = Linear.QQVectorSpace *)
+(*   type abstract_weight = (symbol * symbol) list * Ctx.t Sign.t * VS.t *)
+(*   let man = Polka.manager_alloc_equalities () *)
 
-  (* Map a list of transition symbols to an affine coordinate system
-     for those symbols.  *)
-  let coordinates_of tr_symbols =
-    let enum =
-      (List.fold_left (fun syms (x, x') ->
-           SymbolSet.add x (SymbolSet.add x' syms))
-         SymbolSet.empty
-         tr_symbols
-       |> SymbolSet.enum)
-      /@ mk_const srk
-    in
-    BatEnum.push enum (mk_one srk);
-    BatArray.of_enum enum
+(*   (\* Map a list of transition symbols to an affine coordinate system *)
+(*      for those symbols.  *\) *)
+(*   let coordinates_of tr_symbols = *)
+(*     let enum = *)
+(*       (List.fold_left (fun syms (x, x') -> *)
+(*            SymbolSet.add x (SymbolSet.add x' syms)) *)
+(*          SymbolSet.empty *)
+(*          tr_symbols *)
+(*        |> SymbolSet.enum) *)
+(*       /@ mk_const srk *)
+(*     in *)
+(*     BatEnum.push enum (mk_one srk); *)
+(*     BatArray.of_enum enum *)
 
-  let abstract tr =
-    let tf = TF.linearize srk (K.to_transition_formula tr) in
-    let abs_solver = Abstract.Solver.make srk (TF.formula tf) in
-    let coordinates = coordinates_of (TF.symbols tf) in
-    let aff =
-      Abstract.LinearSpan.abstract abs_solver coordinates
-    in
-    let signs =
-      let deltas =
-        List.fold_left (fun deltas (x, x') ->
-            (mk_sub srk (mk_const srk x') (mk_const srk x))::deltas)
-          []
-          (TF.symbols tf)
-      in
-      let vars = BatArray.to_list coordinates in
-      Abstract.Sign.abstract abs_solver (vars@deltas)
-    in
-    (TF.symbols tf, signs, aff)
+(*   let abstract tr = *)
+(*     let tf = TF.linearize srk (K.to_transition_formula tr) in *)
+(*     let abs_solver = Abstract.Solver.make srk (TF.formula tf) in *)
+(*     let coordinates = coordinates_of (TF.symbols tf) in *)
+(*     let aff = *)
+(*       Abstract.LinearSpan.abstract abs_solver coordinates *)
+(*     in *)
+(*     let signs = *)
+(*       let deltas = *)
+(*         List.fold_left (fun deltas (x, x') -> *)
+(*             (mk_sub srk (mk_const srk x') (mk_const srk x))::deltas) *)
+(*           [] *)
+(*           (TF.symbols tf) *)
+(*       in *)
+(*       let vars = BatArray.to_list coordinates in *)
+(*       Abstract.Sign.abstract abs_solver (vars@deltas) *)
+(*     in *)
+(*     (TF.symbols tf, signs, aff) *)
 
-  let concretize (tr_symbols, signs, aff) =
-    let transform =
-      List.fold_left (fun assign (x,x') ->
-          match V.of_symbol x with
-          | Some v -> (v, mk_const srk x')::assign
-          | None -> assert false)
-        []
-        tr_symbols
-    in
-    let coordinates = coordinates_of tr_symbols in
-    let affine_guard =
-      let zero = mk_zero srk in
-      List.map
-        (fun vec ->
-          Linear.term_of_vec srk (fun dim -> coordinates.(dim)) vec
-          |> mk_eq srk zero)
-        aff
-      |> mk_and srk
-    in
-    let guard =
-      mk_and srk [Sign.formula_of srk signs;
-                  affine_guard]
-    in
-    K.construct guard transform
+(*   let concretize (tr_symbols, signs, aff) = *)
+(*     let transform = *)
+(*       List.fold_left (fun assign (x,x') -> *)
+(*           match V.of_symbol x with *)
+(*           | Some v -> (v, mk_const srk x')::assign *)
+(*           | None -> assert false) *)
+(*         [] *)
+(*         tr_symbols *)
+(*     in *)
+(*     let coordinates = coordinates_of tr_symbols in *)
+(*     let affine_guard = *)
+(*       let zero = mk_zero srk in *)
+(*       List.map *)
+(*         (fun vec -> *)
+(*           Linear.term_of_vec srk (fun dim -> coordinates.(dim)) vec *)
+(*           |> mk_eq srk zero) *)
+(*         aff *)
+(*       |> mk_and srk *)
+(*     in *)
+(*     let guard = *)
+(*       mk_and srk [Sign.formula_of srk signs; *)
+(*                   affine_guard] *)
+(*     in *)
+(*     K.construct guard transform *)
 
-  let equal (tr_symbols1, signs1, aff1) (tr_symbols2, signs2, aff2) =
-    let pre_symbols tr_symbols =
-      List.fold_left (fun pre (x,_) ->
-          SymbolSet.add x pre)
-        SymbolSet.empty
-        tr_symbols
-    in
-    SymbolSet.equal (pre_symbols tr_symbols1) (pre_symbols tr_symbols2)
-    && Abstract.Sign.equal signs1 signs2
-    && VS.equal aff1 aff2
+(*   let equal (tr_symbols1, signs1, aff1) (tr_symbols2, signs2, aff2) = *)
+(*     let pre_symbols tr_symbols = *)
+(*       List.fold_left (fun pre (x,_) -> *)
+(*           SymbolSet.add x pre) *)
+(*         SymbolSet.empty *)
+(*         tr_symbols *)
+(*     in *)
+(*     SymbolSet.equal (pre_symbols tr_symbols1) (pre_symbols tr_symbols2) *)
+(*     && Abstract.Sign.equal signs1 signs2 *)
+(*     && VS.equal aff1 aff2 *)
 
-  let widen _ y = y
-end
+(*   let widen _ y = y *)
+(* end *)
 
 (* Weight-labeled graph module suitable for ocamlgraph *)
 module TSG = struct
@@ -845,10 +845,10 @@ let make_transition_system rg =
 
 let mk_query ts entry =
   TS.mk_query ts entry
-    (if !monotone then
-       (module MonotoneDom)
-     else
-       (module TransitionDom))
+    (* (if !monotone then *)
+       (* (module MonotoneDom) *)
+     (* else *)
+       (* (module TransitionDom)) *)
 
 let analyze file =
   populate_offset_table file;

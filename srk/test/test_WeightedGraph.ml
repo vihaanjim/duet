@@ -83,17 +83,17 @@ let mk_ts edges call_edges =
   in
   rg
 
-module TransitionDom = struct
-  type weight = T.t
-  type abstract_weight = T.t
-  let concretize x = x
-  let abstract x = x
-  let equal = T.equal
-  let widen = T.widen
-end
+(* module TransitionDom = struct *)
+(*   type weight = T.t *)
+(*   type abstract_weight = T.t *)
+(*   let concretize x = x *)
+(*   let abstract x = x *)
+(*   let equal = T.equal *)
+(*   let widen = T.widen *)
+(* end *)
 
 let mk_query edges call_edges src =
-  TS.mk_query (mk_ts edges call_edges) src (module TransitionDom)
+  TS.mk_query (mk_ts edges call_edges) src
     
 let pe_context = Pathexpr.mk_context ()
 

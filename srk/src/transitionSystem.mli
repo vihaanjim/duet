@@ -40,6 +40,7 @@ module Make
        val star : t -> t
        val exists : (var -> bool) -> t -> t
        val domain : (C.t Iteration.exp_op) ref
+       val equal : t -> t -> bool
      end) : sig
 
   type vertex = int
@@ -55,12 +56,7 @@ module Make
 
   (** Create a query structure.  The optional [delay] parameter specifies the
       widening delay to use during summary computation. *)
-  val mk_query : ?delay:int ->
-                 t ->
-                 vertex ->
-                 (module WeightedGraph.AbstractWeight
-                         with type weight = transition) ->
-                 query
+  val mk_query : ?delay:int -> t -> vertex -> query
 
   (** Over-approximate the sum of the weights of all paths from the
      query's source vertex to the given target vertex. *)

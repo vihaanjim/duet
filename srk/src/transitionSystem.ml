@@ -36,7 +36,6 @@ module Make
        val transform : t -> (var * C.t term) BatEnum.t
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> C.t term
-       val uses : t -> var list
        val defines : t -> var list
        val assume : C.t formula -> t
        val mul : t -> t -> t
@@ -46,6 +45,7 @@ module Make
        val star : t -> t
        val exists : (var -> bool) -> t -> t
        val domain : (C.t Iteration.exp_op) ref
+       val equal : t -> t -> bool
      end)
 = struct
 
@@ -62,8 +62,7 @@ module Make
 
   let srk = C.context
 
-  let mk_query ?(delay=1) ts source
-        (module A : WG.AbstractWeight with type weight = transition) =
+  let mk_query ?(delay=1) ts source =
     let rg =
       WG.fold_vertex
         (fun v rg -> WG.RecGraph.add_vertex rg v)
@@ -80,101 +79,81 @@ module Make
     (* Find the transition formula attached to some edge *)
     let wt (u, v) = match WG.edge_weight ts u v with
       | Weight w -> w
-      | Call _ -> T.zero
+      | Call _ -> assert false
     in
     (* Compute the `length` of a path expression. This is simply
        the number of times that each variable is defined in the
        expression *)
-    let length =
-      let table = Pathexpr.mk_table () in
-      Pathexpr.eval_nested
-        ~table
-        ~algebra:begin
-          let union f = VarMap.union (fun _ a b -> Some (f a b)) in
-          function
-          | `Edge e ->
-             T.defines (wt e)
-             |> BatList.enum
-             |> BatEnum.map (fun v -> (v, 1))
-             |> VarMap.of_enum
-          | `Mul (l1, l2) -> union (+) l1 l2
-          | `Add (l1, l2) -> union Stdlib.Int.max l1 l2
-          | `Star l -> VarMap.map (fun _ -> 1) l
-          | `Segment l ->
-             VarMap.filter_map (fun v _ ->
-                 if Var.is_global v then Some 1 else None)
-               l
-          | `One -> VarMap.empty
-          | `Zero -> assert false
-        end
-    in
-    (* Memo for triples (PE, l, u) *)
-    (* TODO: find a way of using hashconsing implementation! *)
-    let module HT = BatHashtbl in
-    (* Create a list of maps from variables to pre/post symbols for
-       each edge in the graph. This is well-defined because it is
-       with respect to the graph / source vertex. *)
-    let vars =
-      (* keep track of which path expressions we've visited *)
-      let pe_set = HT.create 991 in
-      (* the memoized values for edges *)
-      let edge_table = BatHashtbl.create 991 in
-      (* Add all the edges covered by a path expression. *)
-      let rec add_edges pe (l, u) =
-        if not (HT.mem pe_set pe) then
-          let addv = VarMap.union (fun _ a b -> Some (a + b)) in
-          let _ = 
-            match Pathexpr.destruct pe with
-            | `Edge e ->
-               let w = wt e in
-               let uses = T.uses w |> BatList.enum |> VarSet.of_enum in
-               let map =
-                 VarMap.merge (fun v il iu ->
-                     let il = Option.value ~default:0 il in
-                     let iu = Option.get iu in
-                     if il <> iu || VarSet.mem v uses then Some (il, iu)
-                     else None)
-                   l u
-               in
-               HT.add edge_table e map 
-            | `Mul (p1, p2) ->
-               let m = addv l (length p1) in
-               add_edges p1 (l, m) ;
-               add_edges p2 (m, u)
-            | `Add (p1, p2) ->
-               add_edges p1 (l, u) ;
-               add_edges p2 (l, u)
-            | `Star p ->
-               let l' = addv l (length pe) in
-               let u' = addv l' (length p) in
-               add_edges p (l', u')
-            | `Segment p ->
-               let l' = VarMap.filter (fun v _ -> Var.is_global v) l in
-               let u' = addv l' (length p) in
-               add_edges p (l', u')
-            | `One | `Zero -> ()
-          in
-          HT.add pe_set pe ()
+    let length_to =
+      let algebra =
+        let union f = VarMap.union (fun _ a b -> Some (f a b)) in
+        function
+        | `Edge e ->
+           (List.fold_left (fun m v -> VarMap.add v 1 m)
+              VarMap.empty
+              (T.defines (wt e)),
+            VarSet.empty)
+        | `Mul ((l1, _), (l2, t)) -> (union (+) l1 l2, t)
+        | `Add ((l1, _), (l2, t)) -> (union Stdlib.Int.max l1 l2, t)
+        | `Star (l, _) -> (VarMap.map (fun _ -> 1) l, VarMap.keys l |> VarSet.of_enum)
+        | `Segment (l, _) ->
+           (VarMap.filter (fun v _ -> Var.is_global v) l, VarSet.empty)
+        | `One | `Zero -> (VarMap.empty, VarSet.empty)
       in
-      (fun (v, w) ->
-        let expr = WG.RecGraph.pathexpr query w in
-        add_edges expr (VarMap.empty, length expr) ;
-        HT.find edge_table (v, w))
+      let module LengthAbstractDomain = struct
+          type weight = int VarMap.t * VarSet.t
+          type abstract_weight = VarSet.t
+
+          let abstract map = VarMap.keys (fst map) |> VarSet.of_enum
+          let concretize set = (VarSet.fold (fun v -> VarMap.add v 1) set VarMap.empty, VarSet.empty)
+          let equal = VarSet.equal
+          let widen = VarSet.union
+        end
+      in
+      let weighted_query = WG.RecGraph.summarize_iterative query algebra ~delay:0 (module LengthAbstractDomain) in
+      (fun ?(inclusive=true) v ->
+        (* Printf.printf "%s\n" (Pathexpr.show (WG.RecGraph.pathexpr query v)) ; *)
+        let (l, tdefs) = WG.RecGraph.path_weight weighted_query v in
+        if inclusive then l
+        else VarSet.fold (fun v -> VarMap.modify v (fun i -> i - 1)) tdefs l)
     in
     let algebra = function
-        | `Edge e -> STF.of_tr (wt e) (VarMap.enum (vars e))
-        | `Mul (f1, f2) -> STF.mul f1 f2
-        | `Add (f1, f2) -> STF.add f1 f2
-        | `Star f -> STF.star f
-        | `Segment f -> STF.project f
-        | `One -> STF.one
-        | `Zero -> STF.zero
+      | `Edge e ->
+         let pre = length_to (fst e) in
+         (* if not (VarMap.is_empty pre) then Printf.printf "to %d (inclusive): %d\n" (fst e) (VarMap.choose pre |> snd) ; *)
+         let post = length_to ~inclusive:false (snd e) in
+         (* Printf.printf "to %d (exclusive): %d\n" (snd e) (VarMap.choose post |> snd) ; *)
+         let bounds =
+           VarMap.merge (fun _ l u ->
+                let l = Option.value ~default:0 l in
+                let u = Option.value ~default:0 u in
+                Some (l, if l > u then l + 1 else u))
+             pre post
+           |> VarMap.enum
+         in
+         STF.of_tr (wt e) bounds
+      | `Mul (f1, f2) -> STF.mul f1 f2
+      | `Add (f1, f2) -> STF.add f1 f2
+      | `Star f -> STF.star f
+      | `Segment f -> STF.project f
+      | `One -> STF.one
+      | `Zero -> STF.zero
+    in
+    let module SkolemizedTransitionDomain = struct
+        type weight = STF.t
+        type abstract_weight = STF.t
+
+        let abstract x = x
+        let concretize x = x
+        let equal = STF.equal
+        let widen = STF.widen
+      end
     in
     WG.RecGraph.summarize_iterative
       query
       algebra
       ~delay
-      (module STF.AbstractDomain(A))
+      (module SkolemizedTransitionDomain)
 
   type t = (T.t label) WG.t
 
