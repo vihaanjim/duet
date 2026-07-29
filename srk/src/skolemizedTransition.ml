@@ -188,14 +188,28 @@ module Make
     { bounds ; formula = substitute_map srk subst closure }
 
   let project stf =
-    let bounds =
-      VarMap.fold (fun v (l, _) bounds ->
-          if Var.is_global v then VarMap.add v (l, l+1) bounds
-          else bounds)
+    let (bounds, subst) =
+      VarMap.fold (fun v (l, u) (bounds, subst) ->
+          if Var.is_global v then
+            (VarMap.add v (l, l+1) bounds,
+             let sym = var_i_symbol v in
+             Symbol.Map.add (sym l) (mk_const srk (sym l)) subst
+             |> Symbol.Map.add (sym u) (mk_const srk (sym (l+1))))
+          else (bounds, subst))
         stf.bounds
-        VarMap.empty
+        (VarMap.empty, Symbol.Map.empty)
     in
-    { bounds ; formula = adjust_formula stf bounds}
+    let fresh_skolem =
+      Memo.memo (fun sym ->
+          let name = show_symbol srk sym in
+          let typ = typ_symbol srk sym in
+          mk_const srk (mk_symbol srk ~name typ))
+    in
+    { bounds ; formula = substitute_const srk 
+                           (fun s -> match Symbol.Map.find_opt s subst with
+                                     | Some t -> t
+                                     | None -> fresh_skolem s)
+                           stf.formula}
 
   let widen left right =
     (* Printf.printf "%s WEDGE %s\n" (Formula.show srk left.formula) (Formula.show srk right.formula) ; *)
