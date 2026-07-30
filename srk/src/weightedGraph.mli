@@ -160,6 +160,14 @@ module RecGraph : sig
     val iter_succ  : (call -> unit) -> t -> call -> unit
   end
 
+  module CallGraphLoop : sig
+    type loop
+    type forest = [ `Vertex of CallGraph.V.t | `Loop of loop ] list
+    val loop_nest : CallGraph.t -> forest
+    val header : loop -> CallGraph.V.t
+    val children : loop -> forest
+  end
+
   val empty : unit -> t
   val add_vertex : t -> vertex -> t
   val add_edge : t -> vertex -> vertex -> t

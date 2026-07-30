@@ -41,6 +41,7 @@ module Make
        val exists : (var -> bool) -> t -> t
        val domain : (C.t Iteration.exp_op) ref
        val equal : t -> t -> bool
+       val widen : t -> t -> t
      end) : sig
 
   type vertex = int

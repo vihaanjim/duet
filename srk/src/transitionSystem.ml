@@ -37,6 +37,7 @@ module Make
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> C.t term
        val defines : t -> var list
+       val uses : t -> var list
        val assume : C.t formula -> t
        val mul : t -> t -> t
        val add : t -> t -> t
@@ -46,6 +47,7 @@ module Make
        val exists : (var -> bool) -> t -> t
        val domain : (C.t Iteration.exp_op) ref
        val equal : t -> t -> bool
+       val widen : t -> t -> t
      end)
 = struct
 
@@ -56,9 +58,7 @@ module Make
   module VarMap = BatMap.Make(Var)
   module VarSet = BatSet.Make(Var)
 
-  module STF = SkolemizedTransition.Make(C)(Var)(T)
-
-  type query = STF.t WG.RecGraph.weight_query
+  type query = WG.RecGraph.query * T.t WG.RecGraph.weight_query * (Pathexpr.nested Pathexpr.t -> T.t)
 
   let srk = C.context
 
@@ -76,98 +76,127 @@ module Make
            ts
     in
     let query = WG.RecGraph.mk_query rg source in
-    (* Find the transition formula attached to some edge *)
-    let wt (u, v) = match WG.edge_weight ts u v with
-      | Weight w -> w
-      | Call _ -> assert false
-    in
     (* Compute the `length` of a path expression. This is simply
        the number of times that each variable is defined in the
        expression *)
-    let length_to =
-      let algebra =
-        let union f = VarMap.union (fun _ a b -> Some (f a b)) in
-        function
-        | `Edge e ->
-           (List.fold_left (fun m v -> VarMap.add v 1 m)
-              VarMap.empty
-              (T.defines (wt e)),
-            VarSet.empty)
-        | `Mul ((l1, _), (l2, t)) -> (union (+) l1 l2, t)
-        | `Add ((l1, _), (l2, t)) -> (union Stdlib.Int.max l1 l2, t)
-        | `Star (l, _) -> (VarMap.map (fun _ -> 1) l, VarMap.keys l |> VarSet.of_enum)
-        | `Segment (l, _) ->
-           (VarMap.filter (fun v _ -> Var.is_global v) l, VarSet.empty)
-        | `One | `Zero -> (VarMap.empty, VarSet.empty)
-      in
-      let module LengthAbstractDomain = struct
-          type weight = int VarMap.t * VarSet.t
-          type abstract_weight = VarSet.t
-
-          let abstract map = VarMap.keys (fst map) |> VarSet.of_enum
-          let concretize set = (VarSet.fold (fun v -> VarMap.add v 1) set VarMap.empty, VarSet.empty)
-          let equal = VarSet.equal
-          let widen = VarSet.union
-        end
-      in
-      let weighted_query = WG.RecGraph.summarize_iterative query algebra ~delay:0 (module LengthAbstractDomain) in
-      (fun ?(inclusive=true) v ->
-        (* Printf.printf "%s\n" (Pathexpr.show (WG.RecGraph.pathexpr query v)) ; *)
-        let (l, tdefs) = WG.RecGraph.path_weight weighted_query v in
-        if inclusive then l
-        else VarSet.fold (fun v -> VarMap.modify v (fun i -> i - 1)) tdefs l)
+    let length_algebra weight_query =
+      let union f = VarMap.union (fun _ a b -> Some (f a b)) in
+      function
+      | `Edge (u, v) ->
+         begin match WG.edge_weight ts u v with
+         | Weight tr ->
+            List.fold_left (fun m v ->
+                if not (VarMap.mem v m) then VarMap.add v 0 m
+                else m)
+              (List.fold_left (fun m v -> VarMap.add v 1 m)
+                 VarMap.empty
+                 (T.defines tr))
+              (T.uses tr)
+         | Call (en,ex) -> WG.RecGraph.get_summary
+                             (Option.get weight_query) (en,ex)
+         end
+      | `Mul (l1, l2) -> union (+) l1 l2
+      | `Add (l1, l2) -> union Stdlib.Int.max l1 l2
+      | `Star l -> VarMap.map (fun _ -> 1) l
+      | `Segment l -> VarMap.filter (fun v _ -> Var.is_global v) l
+      | `One | `Zero -> VarMap.empty
     in
-    let algebra = function
-      | `Edge e ->
-         let pre = length_to (fst e) in
-         (* if not (VarMap.is_empty pre) then Printf.printf "to %d (inclusive): %d\n" (fst e) (VarMap.choose pre |> snd) ; *)
-         let post = length_to ~inclusive:false (snd e) in
-         (* Printf.printf "to %d (exclusive): %d\n" (snd e) (VarMap.choose post |> snd) ; *)
-         let bounds =
-           VarMap.merge (fun _ l u ->
-                let l = Option.value ~default:0 l in
-                let u = Option.value ~default:0 u in
-                Some (l, if l > u then l + 1 else u))
-             pre post
-           |> VarMap.enum
-         in
-         STF.of_tr (wt e) bounds
-      | `Mul (f1, f2) -> STF.mul f1 f2
-      | `Add (f1, f2) -> STF.add f1 f2
-      | `Star f -> STF.star f
-      | `Segment f -> STF.project f
-      | `One -> STF.one
-      | `Zero -> STF.zero
-    in
-    let module SkolemizedTransitionDomain = struct
-        type weight = STF.t
-        type abstract_weight = STF.t
+    let module LengthAbstractWeight = struct
+        type weight = int VarMap.t
+        type abstract_weight = VarSet.t
 
-        let abstract x = x
-        let concretize x = x
-        let equal = STF.equal
-        let widen = STF.widen
+        let abstract map = VarMap.keys map |> VarSet.of_enum
+        let concretize set = VarSet.fold (fun v -> VarMap.add v 1) set VarMap.empty
+        let equal = VarSet.equal
+        let widen = VarSet.union
       end
     in
-    WG.RecGraph.summarize_iterative
-      query
-      algebra
-      ~delay
-      (module SkolemizedTransitionDomain)
+    let open WG.RecGraph in
+    let length_query =
+      summarize_iterative query
+        (length_algebra None)
+        ~delay:0
+        (module LengthAbstractWeight)
+    in
+    let weight_query = mk_weight_query query (fun _ -> assert false) in
+    let callgraph = mk_callgraph query in
+    let module STF =
+      SkolemizedTransition.Make(C)(Var)(T)(VarMap)(struct
+          let wt (u, v) =
+            match WG.edge_weight ts u v with
+            | Weight w -> w
+            | Call (en,ex) -> get_summary weight_query (en,ex)
+          
+          let length =
+            let algebra = length_algebra (Some length_query) in
+            let table = Pathexpr.mk_table () in
+            Pathexpr.eval_nested ~table ~algebra
+
+          let src =
+            let algebra = function
+              | `Edge (s, _) | `Star s | `Segment s
+                | `Mul (s, _) | `Add (s, _) -> s
+              | `One | `Zero -> assert false
+            in
+            let table = Pathexpr.mk_table () in
+            Pathexpr.eval_nested ~table ~algebra
+
+          (* Take a stab at which variables to use for this path
+             expression (in practice, only used on the insides of
+             segments). This allows us to memoize on path expressions
+             (on reducible flow graphs) *)
+          let guess_vars pe =
+            let pre = WG.RecGraph.path_weight length_query (src pe) in
+            VarMap.merge (fun _ l d ->
+                let l = Option.value ~default:0 l in
+                let d = Option.value ~default:0 d in
+                Some (l, l + d))
+              pre (length pe)
+        end)
+    in
+    let summarize call =
+      let pe = WG.RecGraph.call_pathexpr query call |> Pathexpr.promote in
+      STF.transition pe
+      |> T.exists Var.is_global
+    in
+    (* stabilize summaries within a WTO component, and add to unstable
+       all calls whose summary (may have) changed as a result. *)
+    let rec fix =
+      function
+      | `Vertex call ->
+         summarize call
+         |> set_summary weight_query call
+      | `Loop loop ->
+         let header = CallGraphLoop.header loop in
+         let rec fix_component delay =
+           let old_weight = get_summary weight_query header in
+           let new_weight =
+             let new_weight = summarize header in
+             if delay > 0 then
+               new_weight
+             else
+               T.widen old_weight new_weight
+           in
+           set_summary weight_query header new_weight;
+           List.iter fix (CallGraphLoop.children loop);
+           if not (T.equal old_weight new_weight)
+           then fix_component (delay - 1)
+         in
+         fix_component delay
+    in
+    callgraph
+    |> CallGraph.iter_vertex (fun call ->
+           set_summary weight_query call T.zero);
+    List.iter fix (CallGraphLoop.loop_nest callgraph);
+    (query, weight_query, STF.transition)
 
   type t = (T.t label) WG.t
 
-  let path_weight query tgt =
-    WG.RecGraph.path_weight query tgt |> STF.to_tr
-  let call_weight query call =
-    WG.RecGraph.call_weight query call |> STF.to_tr
-  let omega_path_weight query algebra =
-    WG.RecGraph.omega_path_weight query
-      begin function
-        | `Omega stf -> algebra (`Omega (STF.to_tr stf))
-        | `Mul (stf, tr) -> algebra (`Mul ((STF.to_tr stf), tr))
-        | `Add (left, right) -> algebra (`Add (left, right))
-      end
+  let path_weight (query, _, f) tgt =
+    f (WG.RecGraph.pathexpr query tgt)
+  let call_weight (query, _, f) call =
+    f (WG.RecGraph.call_pathexpr query call |> Pathexpr.promote)
+  let omega_path_weight _ _ = assert false
 
   let label_algebra =
     let add x y = match x, y with
@@ -207,7 +236,7 @@ module Make
   let uses tr =
     BatEnum.fold
       (fun uses (_, term) ->
-         Symbol.Set.union (symbols term) uses)
+        Symbol.Set.union (symbols term) uses)
       (symbols (T.guard tr))
       (T.transform tr)
     |> Symbol.Set.enum
@@ -277,13 +306,13 @@ module Make
 
     let widening_store =
       VarMap.merge (fun _ x y -> match x, y with
-            | Some x, Some y ->
-              let result = Interval.widening x y in
-              if Interval.equal result Interval.top then
-                None
-              else
-                Some result
-            | _, _ -> None)
+                                 | Some x, Some y ->
+                                    let result = Interval.widening x y in
+                                    if Interval.equal result Interval.top then
+                                      None
+                                    else
+                                      Some result
+                                 | _, _ -> None)
 
     let widening x y =
       match x, y with
@@ -292,13 +321,13 @@ module Make
 
     let join_store =
       VarMap.merge (fun _ x y -> match x, y with
-          | Some x, Some y ->
-            let result = Interval.join x y in
-            if Interval.equal result Interval.top then
-              None
-            else
-              Some result
-          | _, _ -> None)
+                                 | Some x, Some y ->
+                                    let result = Interval.join x y in
+                                    if Interval.equal result Interval.top then
+                                      None
+                                    else
+                                      Some result
+                                 | _, _ -> None)
 
     let join x y =
       match x, y with
@@ -308,15 +337,15 @@ module Make
     let to_formula store =
       let boxes = ref [] in
       store |> VarMap.iter (fun v ivl ->
-          let t = mk_const srk (Var.symbol_of v) in
-          begin match Interval.lower ivl with
-            | Some lo -> boxes := (mk_leq srk (mk_real srk lo) t)::(!boxes)
-            | None -> ()
-          end;
-          begin match Interval.upper ivl with
-            | Some hi -> boxes := (mk_leq srk t (mk_real srk hi))::(!boxes)
-            | None -> ()
-          end);
+                   let t = mk_const srk (Var.symbol_of v) in
+                   begin match Interval.lower ivl with
+                   | Some lo -> boxes := (mk_leq srk (mk_real srk lo) t)::(!boxes)
+                   | None -> ()
+                   end;
+                   begin match Interval.upper ivl with
+                   | Some hi -> boxes := (mk_leq srk t (mk_real srk hi))::(!boxes)
+                   | None -> ()
+                   end);
       mk_and srk (!boxes)
 
     let transform (_s, label, _t) prop =
@@ -324,66 +353,66 @@ module Make
       match prop, label with
       | Bottom, _ -> Bottom
       | Store store, Call (_, _) ->
-        Store (VarMap.filter
-                 (fun v _ -> not (Var.is_global v))
-                 store)
+         Store (VarMap.filter
+                  (fun v _ -> not (Var.is_global v))
+                  store)
       | Store store, Weight tr ->
-        let guards = ref [T.guard tr] in
-        let push_guard x = guards := x::(!guards) in
-        uses tr |> List.iter (fun v ->
-            if VarMap.mem v store then
-              let ivl = VarMap.find v store in
-              let t = mk_const srk (Var.symbol_of v) in
-              begin match Interval.lower ivl with
-                | Some lo -> push_guard (mk_leq srk (mk_real srk lo) t)
-                | None -> ()
-              end;
-              begin match Interval.upper ivl with
-                | Some hi -> push_guard (mk_leq srk t (mk_real srk hi))
-                | None -> ()
-              end);
-        let guard = mk_and srk (!guards) in
-        (* variables used/defined by tr *)
-        let vars = VarSet.elements (abstract_defs tr) in
-        let objectives =
-          List.map (fun v ->
-              if T.mem_transform v tr then
-                T.get_transform v tr
-              else
-                mk_const srk (Var.symbol_of v))
-            vars
-          |> List.filter_map (fun t -> match Term.refine srk t with |`ArithTerm at -> Some at | `ArrTerm _ -> None) 
-        in
-        let result =
-          match Nonlinear.optimize_box ~context srk guard objectives with
-          | `Sat intervals ->
-            let store' =
-              List.fold_left2
-                (fun m v ivl ->
-                   if Interval.equal ivl Interval.top then
-                     VarMap.remove v m
-                   else
-                     VarMap.add v ivl m)
-                store
-                vars
-                intervals
-            in
-            Store store'
-          | `Unsat -> Bottom
-          | `Unknown ->
-            Store (BatEnum.fold
-                     (fun m (v, _) -> VarMap.remove v m)
-                     store
-                     (T.transform tr))
-        in
-        result
+         let guards = ref [T.guard tr] in
+         let push_guard x = guards := x::(!guards) in
+         uses tr |> List.iter (fun v ->
+                        if VarMap.mem v store then
+                          let ivl = VarMap.find v store in
+                          let t = mk_const srk (Var.symbol_of v) in
+                          begin match Interval.lower ivl with
+                          | Some lo -> push_guard (mk_leq srk (mk_real srk lo) t)
+                          | None -> ()
+                          end;
+                          begin match Interval.upper ivl with
+                          | Some hi -> push_guard (mk_leq srk t (mk_real srk hi))
+                          | None -> ()
+                          end);
+         let guard = mk_and srk (!guards) in
+         (* variables used/defined by tr *)
+         let vars = VarSet.elements (abstract_defs tr) in
+         let objectives =
+           List.map (fun v ->
+               if T.mem_transform v tr then
+                 T.get_transform v tr
+               else
+                 mk_const srk (Var.symbol_of v))
+             vars
+           |> List.filter_map (fun t -> match Term.refine srk t with |`ArithTerm at -> Some at | `ArrTerm _ -> None) 
+         in
+         let result =
+           match Nonlinear.optimize_box ~context srk guard objectives with
+           | `Sat intervals ->
+              let store' =
+                List.fold_left2
+                  (fun m v ivl ->
+                    if Interval.equal ivl Interval.top then
+                      VarMap.remove v m
+                    else
+                      VarMap.add v ivl m)
+                  store
+                  vars
+                  intervals
+              in
+              Store store'
+           | `Unsat -> Bottom
+           | `Unknown ->
+              Store (BatEnum.fold
+                       (fun m (v, _) -> VarMap.remove v m)
+                       store
+                       (T.transform tr))
+         in
+         result
   end
 
   module PredicateSet = struct
     include BatSet.Make(struct
-        type t = C.t formula
-        let compare = Formula.compare
-      end)
+                type t = C.t formula
+                let compare = Formula.compare
+              end)
     let pp formatter set =
       SrkUtil.pp_print_enum (Formula.pp srk) formatter (enum set)
   end
@@ -396,7 +425,7 @@ module Make
     type t =
       | State of PS.t * Box.store
       | Bottom
-    [@@deriving show]
+[@@deriving show]
 
     type edge = int * tlabel * int
 
@@ -405,8 +434,8 @@ module Make
       | Bottom, _ -> prop'
       | _, Bottom -> prop
       | State (predicates, store), State (predicates', store') ->
-        State (PS.inter predicates predicates',
-               Box.join_store store store')
+         State (PS.inter predicates predicates',
+                Box.join_store store store')
 
     let normalize predicates store =
       let guard =
@@ -428,11 +457,11 @@ module Make
       in
       match Nonlinear.optimize_box ~context srk guard objectives with
       | `Sat intervals ->
-        List.fold_left2 (fun store v ivl ->
-            VarMap.add v ivl store)
-          store
-          variables
-          intervals
+         List.fold_left2 (fun store v ivl ->
+             VarMap.add v ivl store)
+           store
+           variables
+           intervals
       | `Unknown -> store
       | `Unsat -> invalid_arg "normalize: abstract state is inconsistent"
 
@@ -441,24 +470,24 @@ module Make
       | Bottom, _ -> prop'
       | _, Bottom -> prop
       | State (predicates, store), State (predicates', store') ->
-        if PS.equal predicates predicates' then
-          State (predicates, Box.widening_store store store')
-        else if PS.subset predicates' predicates then
-          let store = normalize predicates store in
-          let store' = normalize predicates' store' in
-          State (PS.inter predicates predicates', Box.join_store store store')
-        else
-          (* Possible if, e.g., some abstract post computation returns some
-             Unknowns *)
-          let predicates = PS.inter predicates predicates' in
-          State (predicates, Box.widening_store store store')
+         if PS.equal predicates predicates' then
+           State (predicates, Box.widening_store store store')
+         else if PS.subset predicates' predicates then
+           let store = normalize predicates store in
+           let store' = normalize predicates' store' in
+           State (PS.inter predicates predicates', Box.join_store store store')
+         else
+           (* Possible if, e.g., some abstract post computation returns some
+              Unknowns *)
+           let predicates = PS.inter predicates predicates' in
+           State (predicates, Box.widening_store store store')
 
     let equal prop prop' =
       match prop, prop' with
       | Bottom, Bottom -> true
       | State (predicates, store), State (predicates', store') ->
-        PS.equal predicates predicates'
-        && VarMap.equal Interval.equal store store'
+         PS.equal predicates predicates'
+         && VarMap.equal Interval.equal store store'
       | _, _ -> false
 
     let top = State (PS.empty, VarMap.empty)
@@ -470,110 +499,110 @@ module Make
       match label, prop with
       | (_, Bottom) -> bottom
       | (Call (_, _), State (predicates, store)) ->
-        let store' =
-          match Box.transform (s, label, t) (Box.Store store) with
-          | Box.Store store' -> store'
-          | Box.Bottom -> assert false
-        in
-        let predicates' =
-          PS.filter (fun predicate ->
-              Symbol.Set.for_all (fun sym ->
-                  match Var.of_symbol sym with
-                  | Some var -> not (Var.is_global var)
-                  | None -> true)
-                (symbols predicate))
-            predicates
-        in
-        State (predicates', store')
+         let store' =
+           match Box.transform (s, label, t) (Box.Store store) with
+           | Box.Store store' -> store'
+           | Box.Bottom -> assert false
+         in
+         let predicates' =
+           PS.filter (fun predicate ->
+               Symbol.Set.for_all (fun sym ->
+                   match Var.of_symbol sym with
+                   | Some var -> not (Var.is_global var)
+                   | None -> true)
+                 (symbols predicate))
+             predicates
+         in
+         State (predicates', store')
       | (Weight tr, State (predicates, store)) ->
-        logf ~level:`trace "In: %a" pp (State (predicates, store));
-        logf ~level:`trace "Transition: %a" T.pp tr;
+         logf ~level:`trace "In: %a" pp (State (predicates, store));
+         logf ~level:`trace "Transition: %a" T.pp tr;
 
-        let tr' =
-          T.mul (T.assume (mk_and srk (PS.elements predicates))) tr
-        in
+         let tr' =
+           T.mul (T.assume (mk_and srk (PS.elements predicates))) tr
+         in
 
-        match Box.transform (s, Weight tr', t) (Box.Store store) with
-        | Box.Bottom -> Bottom
-        | Box.Store store' ->
-          let context = Z3.mk_context [("timeout", "100")] in
+         match Box.transform (s, Weight tr', t) (Box.Store store) with
+         | Box.Bottom -> Bottom
+         | Box.Store store' ->
+            let context = Z3.mk_context [("timeout", "100")] in
 
-          let predicates' =
-            let solver = SrkZ3.Solver.make ~theory:"QF_LIRA" ~context srk in
-            let postify =
-              substitute_const srk (fun sym ->
-                  match Var.of_symbol sym with
-                  | Some var ->
-                    if T.mem_transform var tr' then
-                      T.get_transform var tr'
-                    else
-                      mk_const srk sym
-                  | None -> mk_const srk sym)
-            in
-            (* Predicates that hold before the transition and which are not
-               modified *)
-            let unmodified_predicates =
-              PS.filter (fun predicate ->
-                  Symbol.Set.for_all (fun sym ->
-                      match Var.of_symbol sym with
-                      | Some var -> not (T.mem_transform var tr')
-                      | None -> true)
-                    (symbols predicate))
-                predicates
-            in
-            (* Predicates that do not hold before the transition and may hold
-               after *)
-            let modified_predicates =
-              let modified =
-                VarSet.fold (fun v mu ->
-                    PS.union mu (VarMap.find_default PS.empty v universe))
-                  (abstract_defs tr)
-                  PS.empty
+            let predicates' =
+              let solver = SrkZ3.Solver.make ~theory:"QF_LIRA" ~context srk in
+              let postify =
+                substitute_const srk (fun sym ->
+                    match Var.of_symbol sym with
+                    | Some var ->
+                       if T.mem_transform var tr' then
+                         T.get_transform var tr'
+                       else
+                         mk_const srk sym
+                    | None -> mk_const srk sym)
               in
-              PS.elements (PS.diff modified unmodified_predicates)
-            in
-            let indicators =
-              List.map
-                (fun _ -> mk_const srk (mk_symbol srk `TyBool))
+              (* Predicates that hold before the transition and which are not
+                 modified *)
+              let unmodified_predicates =
+                PS.filter (fun predicate ->
+                    Symbol.Set.for_all (fun sym ->
+                        match Var.of_symbol sym with
+                        | Some var -> not (T.mem_transform var tr')
+                        | None -> true)
+                      (symbols predicate))
+                  predicates
+              in
+              (* Predicates that do not hold before the transition and may hold
+                 after *)
+              let modified_predicates =
+                let modified =
+                  VarSet.fold (fun v mu ->
+                      PS.union mu (VarMap.find_default PS.empty v universe))
+                    (abstract_defs tr)
+                    PS.empty
+                in
+                PS.elements (PS.diff modified unmodified_predicates)
+              in
+              let indicators =
+                List.map
+                  (fun _ -> mk_const srk (mk_symbol srk `TyBool))
+                  modified_predicates
+              in
+              SrkZ3.Solver.add solver [Nonlinear.uninterpret srk (T.guard tr')];
+
+              List.iter2 (fun p i ->
+                  SrkZ3.Solver.add solver
+                    [mk_if srk
+                       i
+                       (mk_not srk (Nonlinear.uninterpret srk (postify p)))])
                 modified_predicates
+                indicators;
+
+              (* Assert relevant interval constraints *)
+              uses tr' |> List.iter (fun v ->
+                              if VarMap.mem v store then
+                                let ivl = VarMap.find v store in
+                                let t = mk_const srk (Var.symbol_of v) in
+                                begin match Interval.lower ivl with
+                                | Some lo ->
+                                   SrkZ3.Solver.add solver [mk_leq srk (mk_real srk lo) t]
+                                | None -> ()
+                                end;
+                                begin match Interval.upper ivl with
+                                | Some hi ->
+                                   SrkZ3.Solver.add solver [mk_leq srk t (mk_real srk hi)]
+                                | None -> ()
+                                end);
+
+              List.fold_left2 (fun set predicate indicator ->
+                  match SrkZ3.Solver.check ~assumptions:[indicator] solver  with
+                  | `Unsat -> PS.add predicate set
+                  | _ -> set)
+                unmodified_predicates
+                modified_predicates
+                indicators
             in
-            SrkZ3.Solver.add solver [Nonlinear.uninterpret srk (T.guard tr')];
-
-            List.iter2 (fun p i ->
-                SrkZ3.Solver.add solver
-                  [mk_if srk
-                     i
-                     (mk_not srk (Nonlinear.uninterpret srk (postify p)))])
-              modified_predicates
-              indicators;
-
-            (* Assert relevant interval constraints *)
-            uses tr' |> List.iter (fun v ->
-                if VarMap.mem v store then
-                  let ivl = VarMap.find v store in
-                  let t = mk_const srk (Var.symbol_of v) in
-                  begin match Interval.lower ivl with
-                    | Some lo ->
-                      SrkZ3.Solver.add solver [mk_leq srk (mk_real srk lo) t]
-                    | None -> ()
-                  end;
-                  begin match Interval.upper ivl with
-                    | Some hi ->
-                      SrkZ3.Solver.add solver [mk_leq srk t (mk_real srk hi)]
-                    | None -> ()
-                  end);
-
-            List.fold_left2 (fun set predicate indicator ->
-                match SrkZ3.Solver.check ~assumptions:[indicator] solver  with
-                | `Unsat -> PS.add predicate set
-                | _ -> set)
-              unmodified_predicates
-              modified_predicates
-              indicators
-          in
-          let res = State (predicates', store') in
-          logf ~level:`trace "Out: %a" pp res;
-          res
+            let res = State (predicates', store') in
+            logf ~level:`trace "Out: %a" pp res;
+            res
   end
 
   module IntervalAnalysis = Fixpoint.Make(WGG)(Box)
@@ -596,10 +625,10 @@ module Make
         VHT.modify_def PS.empty var (PS.add (u,v)) ref_map
     in
     tg |> WG.iter_edges (fun (u, label, v) ->
-        match label with
-        | Call _ -> ()
-        | Weight tr ->
-          VarSet.iter (fun var -> add_ref var (u, v)) (references tr));
+              match label with
+              | Call _ -> ()
+              | Weight tr ->
+                 VarSet.iter (fun var -> add_ref var (u, v)) (references tr));
 
     (* Map each transition to its temporary variables not referenced by any
        other transition *)
@@ -608,18 +637,18 @@ module Make
       PHT.modify_def VarSet.empty (u,v) (VarSet.add var) tmp_map
     in
     ref_map |> VHT.iter (fun var ps ->
-        if PS.cardinal ps = 1 then
-          add_tmp (PS.choose ps) var);
+                   if PS.cardinal ps = 1 then
+                     add_tmp (PS.choose ps) var);
     tg |> WG.map_weights (fun u label v ->
-        match label with
-        | Call _ -> label
-        | Weight tr ->
-          try
-            let tmp =
-              List.fold_right VarSet.remove (uses tr) (PHT.find tmp_map (u, v))
-            in
-            Weight (T.exists (fun x -> not (VarSet.mem x tmp)) tr)
-          with Not_found -> label)
+              match label with
+              | Call _ -> label
+              | Weight tr ->
+                 try
+                   let tmp =
+                     List.fold_right VarSet.remove (uses tr) (PHT.find tmp_map (u, v))
+                   in
+                   Weight (T.exists (fun x -> not (VarSet.mem x tmp)) tr)
+                 with Not_found -> label)
 
   let forward_invariants_ivl tg entry =
     let init v =
@@ -633,7 +662,7 @@ module Make
           WG.fold_succ_e (fun (_, weight, v) vars ->
               match weight with
               | Weight tr when L.VertexSet.mem v vertices ->
-                VarSet.union vars (references tr)
+                 VarSet.union vars (references tr)
               | _ -> vars)
             tg
             u
@@ -673,11 +702,11 @@ module Make
           Symbol.Set.fold (fun sym m ->
               match Var.of_symbol sym with
               | Some var ->
-                VarMap.modify_def
-                  PredicateSet.empty
-                  var
-                  (PredicateSet.add predicate)
-                  m
+                 VarMap.modify_def
+                   PredicateSet.empty
+                   var
+                   (PredicateSet.add predicate)
+                   m
               | None -> m)
             (symbols predicate)
             m)
@@ -697,7 +726,7 @@ module Make
           WG.fold_succ_e (fun (_, weight, v) vars ->
               match weight with
               | Weight tr when L.VertexSet.mem v vertices ->
-                VarSet.union vars (references tr)
+                 VarSet.union vars (references tr)
               | _ -> vars)
             tg
             u
@@ -707,36 +736,36 @@ module Make
     in
     let invariants loop =
       let header = L.header loop in
-        let invariant =
-          match annotation header with
-          | PAxBox.Bottom -> mk_false srk
-          | PAxBox.State (predicates, store) ->
-            let relevant = loop_references loop in
-            let box_formula =
-              VarSet.fold (fun v inv ->
-                  if VarMap.mem v store then
-                    VarMap.add v (VarMap.find v store) inv
-                  else
-                    inv)
-                relevant
-                VarMap.empty
-              |> Box.to_formula
-            in
-            let relevant_predicates =
-              PredicateSet.filter (fun predicate ->
-                  Symbol.Set.exists (fun sym ->
-                      match Var.of_symbol sym with
-                      | Some var -> VarSet.mem var relevant
-                      | None -> false)
-                    (symbols predicate))
-                predicates
-            in
-            mk_and srk (box_formula::(PredicateSet.elements relevant_predicates))
-        in
-        logf "Found invariant at %d: %a"
-          header
-          (Formula.pp srk) invariant;
-        (header, invariant)
+      let invariant =
+        match annotation header with
+        | PAxBox.Bottom -> mk_false srk
+        | PAxBox.State (predicates, store) ->
+           let relevant = loop_references loop in
+           let box_formula =
+             VarSet.fold (fun v inv ->
+                 if VarMap.mem v store then
+                   VarMap.add v (VarMap.find v store) inv
+                 else
+                   inv)
+               relevant
+               VarMap.empty
+             |> Box.to_formula
+           in
+           let relevant_predicates =
+             PredicateSet.filter (fun predicate ->
+                 Symbol.Set.exists (fun sym ->
+                     match Var.of_symbol sym with
+                     | Some var -> VarSet.mem var relevant
+                     | None -> false)
+                   (symbols predicate))
+               predicates
+           in
+           mk_and srk (box_formula::(PredicateSet.elements relevant_predicates))
+      in
+      logf "Found invariant at %d: %a"
+        header
+        (Formula.pp srk) invariant;
+      (header, invariant)
     in
     List.map invariants (L.all_loops (L.loop_nest tg))
 
@@ -753,12 +782,12 @@ module Make
             then
               tg
             else begin
-              try
-                let tg = WG.contract_vertex tg v in
-                continue := true;
-                tg
-              with _ -> tg
-            end)
+                try
+                  let tg = WG.contract_vertex tg v in
+                  continue := true;
+                  tg
+                with _ -> tg
+              end)
           tg
           tg
       in
@@ -774,7 +803,7 @@ module Make
           WG.fold_succ_e (fun (_, weight, v) vars ->
               match weight with
               | Weight tr when L.VertexSet.mem v vertices ->
-                VarSet.union vars (references tr)
+                 VarSet.union vars (references tr)
               | _ -> vars)
             tg
             u
@@ -891,62 +920,62 @@ module Make
     let update ~pre weight ~post =
       match weight with
       | Weight tr ->
-        (* Replace modified variable symbols with fresh Skolem
-           constants.  This allows the post-condition of the
-           transition formula tf to be expressed over the symbols
-           associated with the variables via Var.of_symbol /
-           Var.symbol_of *)
-        let subst =
-          BatEnum.fold (fun subst (v, _) ->
-              let pre_sym = mk_symbol srk ((Var.typ v) :> typ) in
-              let post_sym = Var.symbol_of v in
-              Symbol.Map.add post_sym (mk_const srk pre_sym) subst)
-            Symbol.Map.empty
-            (T.transform tr)
-        in
-        let transform_eqs =
-          T.transform tr
-          /@ (fun (v, t) ->
-              let s =  substitute_map srk subst t in 
-              Term.set_expr srk (mk_const srk (Var.symbol_of v)) s
-              )
-          |> BatList.of_enum
-        in
-        let pre_formula = domain.formula_of pre in
-        let tf =
-          mk_and srk (substitute_map srk subst (T.guard tr)
-                      ::substitute_map srk subst pre_formula
-                      ::transform_eqs)
-          |> Nonlinear.uninterpret srk
-        in
-        let symbols = (* Symbols in pre or defined by tr *)
-          VarSet.fold
-            (fun v set ->
+         (* Replace modified variable symbols with fresh Skolem
+            constants.  This allows the post-condition of the
+            transition formula tf to be expressed over the symbols
+            associated with the variables via Var.of_symbol /
+            Var.symbol_of *)
+         let subst =
+           BatEnum.fold (fun subst (v, _) ->
+               let pre_sym = mk_symbol srk ((Var.typ v) :> typ) in
+               let post_sym = Var.symbol_of v in
+               Symbol.Map.add post_sym (mk_const srk pre_sym) subst)
+             Symbol.Map.empty
+             (T.transform tr)
+         in
+         let transform_eqs =
+           T.transform tr
+           /@ (fun (v, t) ->
+             let s =  substitute_map srk subst t in 
+             Term.set_expr srk (mk_const srk (Var.symbol_of v)) s
+           )
+           |> BatList.of_enum
+         in
+         let pre_formula = domain.formula_of pre in
+         let tf =
+           mk_and srk (substitute_map srk subst (T.guard tr)
+                       ::substitute_map srk subst pre_formula
+                       ::transform_eqs)
+           |> Nonlinear.uninterpret srk
+         in
+         let symbols = (* Symbols in pre or defined by tr *)
+           VarSet.fold
+             (fun v set ->
                Symbol.Set.add (Var.symbol_of v) set)
-            (references tr)
-            (Symbol.Set.filter
-               (fun s -> Var.of_symbol s != None)
-               (symbols pre_formula))
-          |> Symbol.Set.elements
-        in
-        let solver = Abstract.Solver.make ~theory:`LIRA srk tf in
-        let post' = domain.abstract solver symbols post in
-        if domain.equal post' post then
-          None
-        else
-          Some post'
+             (references tr)
+             (Symbol.Set.filter
+                (fun s -> Var.of_symbol s != None)
+                (symbols pre_formula))
+           |> Symbol.Set.elements
+         in
+         let solver = Abstract.Solver.make ~theory:`LIRA srk tf in
+         let post' = domain.abstract solver symbols post in
+         if domain.equal post' post then
+           None
+         else
+           Some post'
 
       | Call (_, _) ->
-        let is_local s =
-          match Var.of_symbol s with
-          | None -> true
-          | Some v -> not (Var.is_global v)
-        in
-        let post' = domain.exists is_local pre in
-        if domain.equal post' post then
-          None
-        else
-          Some (domain.join post post')
+         let is_local s =
+           match Var.of_symbol s with
+           | None -> true
+           | Some v -> not (Var.is_global v)
+         in
+         let post' = domain.exists is_local pre in
+         if domain.equal post' post then
+           None
+         else
+           Some (domain.join post post')
     in
     let init v =
       if v = entry then

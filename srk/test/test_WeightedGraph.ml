@@ -220,6 +220,27 @@ let nonrec_call () =
   assert_not_post (TS.call_weight query (10, 11)) (x <= (int 10));
   assert_not_post (TS.path_weight query 1) ((int 0) <= x)
 
+let multiple_params () =
+  let open Infix in
+  let query =
+    mk_query
+      [ (0, T.arith_assign "i" (int 0), 1);
+        (1, T.parallel_assign [("x", i); ("y", (int 1 :> Ctx.t Syntax.term))], 2);
+        (3, T.arith_assign "i" z, 4);
+        (4, T.parallel_assign [("x", i); ("y", (int 1 :> Ctx.t Syntax.term))], 5);
+        (6, T.arith_assign "i" z, 7);
+        (10, T.assume (x = int 0), 11);
+        (11, T.assume (y = int 1), 12);
+        (12, T.arith_assign "z" (x + y), 13);
+        (20, T.arith_assign "z" (x - y), 21)
+      ]
+      [ (2, (10, 13), 3);
+        (5, (20, 21), 6)
+      ]
+      0
+  in
+  assert_post (TS.path_weight query 7) (i = int 0)
+
 let recursive () =
   let open Infix in
   let query =
@@ -388,6 +409,7 @@ let suite = "WeightedGraph" >::: [
     "simple_branch" >:: simple_branch;
     "nested_loop" >:: nested_loop;
     "nonrec_call" >:: nonrec_call;
+    "multiple_params" >:: multiple_params;
     "recursive" >:: recursive;
     "aff_eq1" >:: aff_eq1;
     "aff_collatz" >:: aff_collatz;
@@ -514,6 +536,20 @@ let suite = "WeightedGraph" >::: [
       assert_not_post (TS.path_weight query 7) fls;
       assert_post (TS.path_weight query 10) (x = (int 6));
       assert_not_post (TS.path_weight query 10) fls);
+
+    "multiple_calls" >:: (fun () ->
+      let open Infix in
+      let query =
+        mk_query
+          [(0, T.arith_assign "x" (int 0), 1);
+           (5, T.arith_assign "x" (x + (int 1)), 6)]
+          [(1, (5, 6), 2);
+           (2, (5, 6), 3);
+           (3, (5, 6), 4)]
+          0
+      in
+      assert_post (TS.path_weight query 4) (x = (int 3));
+      assert_not_post (TS.path_weight query 4) fls);
 
     "branching_cycle" >:: (fun () ->
       let query = mk_pathlen_query
