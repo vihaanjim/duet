@@ -45,7 +45,6 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
-       val domain : (C.t Iteration.exp_op) ref
        val equal : t -> t -> bool
        val widen : t -> t -> t
      end)
@@ -97,8 +96,13 @@ module Make
          end
       | `Mul (l1, l2) -> union (+) l1 l2
       | `Add (l1, l2) -> union Stdlib.Int.max l1 l2
-      | `Star l -> VarMap.map (fun _ -> 1) l
-      | `Segment l -> VarMap.filter (fun v _ -> Var.is_global v) l
+      | `Star l -> VarMap.map (fun d -> if d = 0 then 0 else 1) l
+      | `Segment l -> VarMap.filter_map (fun v d ->
+                          if Var.is_global v then
+                            if d = 0 then Some 0
+                            else Some 1
+                          else None)
+                        l
       | `One | `Zero -> VarMap.empty
     in
     let module LengthAbstractWeight = struct
@@ -134,9 +138,10 @@ module Make
 
           let src =
             let algebra = function
-              | `Edge (s, _) | `Star s | `Segment s
+              | `Edge (s, _) -> Some s
+              | `Star s | `Segment s
                 | `Mul (s, _) | `Add (s, _) -> s
-              | `One | `Zero -> assert false
+              | `One | `Zero -> None
             in
             let table = Pathexpr.mk_table () in
             Pathexpr.eval_nested ~table ~algebra
@@ -146,7 +151,8 @@ module Make
              segments). This allows us to memoize on path expressions
              (on reducible flow graphs) *)
           let guess_vars pe =
-            let pre = WG.RecGraph.path_weight length_query (src pe) in
+            let s = src pe |> Option.get in
+            let pre = WG.RecGraph.path_weight length_query s in
             VarMap.merge (fun _ l d ->
                 let l = Option.value ~default:0 l in
                 let d = Option.value ~default:0 d in

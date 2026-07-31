@@ -39,7 +39,6 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
-       val domain : (C.t Iteration.exp_op) ref
        val equal : t -> t -> bool
        val widen : t -> t -> t
      end) : sig

@@ -8,9 +8,9 @@ module Make
      end)
     (Var : sig
        type t
+       val compare : t -> t -> int
        val show : t -> string
        val typ : t -> typ_term
-       val compare : t -> t -> int
        val symbol_of : t -> symbol
        val is_global : t -> bool
      end)
@@ -21,14 +21,17 @@ module Make
        val guard : t -> C.t formula
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> C.t term
-       val domain : (C.t Iteration.exp_op) ref
+       val zero : t
+       val one : t
+       val star : t -> t
+       val exists : (Var.t -> bool) -> t -> t
      end)
     (VarMap : BatMap.S with type key = Var.t)
     (W : sig
        val wt : int * int -> T.t
        val length : Pathexpr.nested Pathexpr.t -> int VarMap.t
        val guess_vars : Pathexpr.nested Pathexpr.t -> (int * int) VarMap.t
-    end) : sig
+     end) : sig
 
   val transition : Pathexpr.nested Pathexpr.t -> T.t
 
