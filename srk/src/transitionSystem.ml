@@ -57,7 +57,13 @@ module Make
   module VarMap = BatMap.Make(Var)
   module VarSet = BatSet.Make(Var)
 
-  type query = WG.RecGraph.query * T.t WG.RecGraph.weight_query * (Pathexpr.nested Pathexpr.t -> T.t)
+  module IntPair = struct
+    type t = int * int [@@deriving ord]
+    let equal (x,y) (x',y') = (x=x' && y=y')
+    let hash = Hashtbl.hash
+  end
+
+  type query = WG.RecGraph.query * (Pathexpr.nested Pathexpr.t -> T.t)
 
   let srk = C.context
 
@@ -97,12 +103,11 @@ module Make
       | `Mul (l1, l2) -> union (+) l1 l2
       | `Add (l1, l2) -> union Stdlib.Int.max l1 l2
       | `Star l -> VarMap.map (fun d -> if d = 0 then 0 else 1) l
-      | `Segment l -> VarMap.filter_map (fun v d ->
-                          if Var.is_global v then
-                            if d = 0 then Some 0
-                            else Some 1
-                          else None)
-                        l
+      | `Segment l ->
+         VarMap.filter_map (fun v d ->
+             if Var.is_global v then
+               if d = 0 then Some 0 else Some 1
+             else None) l
       | `One | `Zero -> VarMap.empty
     in
     let module LengthAbstractWeight = struct
@@ -122,60 +127,53 @@ module Make
         ~delay:0
         (module LengthAbstractWeight)
     in
-    let weight_query = mk_weight_query query (fun _ -> assert false) in
-    let callgraph = mk_callgraph query in
+    (* Machinery copied over from weightedGraph.ml. *)
+    let module HT = BatHashtbl.Make(IntPair) in
+    let module CallSet = BatSet.Make(IntPair) in
+    let changed = ref CallSet.empty in
+    let summaries = HT.create 991 in
+    let get_summary = HT.find summaries in
+    let set_summary call weight =
+      changed := CallSet.add call !changed;
+      HT.replace summaries call weight
+    in
+    (* Helper module to keep code isolated. *)
     let module STF =
       SkolemizedTransition.Make(C)(Var)(T)(VarMap)(struct
           let wt (u, v) =
             match WG.edge_weight ts u v with
             | Weight w -> w
-            | Call (en,ex) -> get_summary weight_query (en,ex)
+            | Call (en,ex) -> get_summary (en,ex)
           
           let length =
             let algebra = length_algebra (Some length_query) in
             let table = Pathexpr.mk_table () in
             Pathexpr.eval_nested ~table ~algebra
 
-          let src =
-            let algebra = function
-              | `Edge (s, _) -> Some s
-              | `Star s | `Segment s
-                | `Mul (s, _) | `Add (s, _) -> s
-              | `One | `Zero -> None
-            in
-            let table = Pathexpr.mk_table () in
-            Pathexpr.eval_nested ~table ~algebra
-
-          (* Take a stab at which variables to use for this path
-             expression (in practice, only used on the insides of
-             segments). This allows us to memoize on path expressions
-             (on reducible flow graphs) *)
-          let guess_vars pe =
-            let s = src pe |> Option.get in
-            let pre = WG.RecGraph.path_weight length_query s in
-            VarMap.merge (fun _ l d ->
-                let l = Option.value ~default:0 l in
-                let d = Option.value ~default:0 d in
-                Some (l, l + d))
-              pre (length pe)
+          let length_to = WG.RecGraph.path_weight length_query
         end)
     in
     let summarize call =
-      let pe = WG.RecGraph.call_pathexpr query call |> Pathexpr.promote in
+      let pe = call_pathexpr query call |> Pathexpr.promote in
+      if not (CallSet.is_empty !changed) then
+        STF.forget (fun u v ->
+            match WG.edge_weight ts u v with
+            | Call (en,ex) -> not (CallSet.mem (en,ex) !changed)
+            | _ -> true) ;
+      changed := CallSet.empty ;
       STF.transition pe
       |> T.exists Var.is_global
     in
-    (* stabilize summaries within a WTO component, and add to unstable
-       all calls whose summary (may have) changed as a result. *)
+    let callgraph = mk_callgraph query in
     let rec fix =
       function
       | `Vertex call ->
          summarize call
-         |> set_summary weight_query call
+         |> set_summary call
       | `Loop loop ->
          let header = CallGraphLoop.header loop in
          let rec fix_component delay =
-           let old_weight = get_summary weight_query header in
+           let old_weight = get_summary header in
            let new_weight =
              let new_weight = summarize header in
              if delay > 0 then
@@ -183,7 +181,7 @@ module Make
              else
                T.widen old_weight new_weight
            in
-           set_summary weight_query header new_weight;
+           set_summary header new_weight;
            List.iter fix (CallGraphLoop.children loop);
            if not (T.equal old_weight new_weight)
            then fix_component (delay - 1)
@@ -192,16 +190,16 @@ module Make
     in
     callgraph
     |> CallGraph.iter_vertex (fun call ->
-           set_summary weight_query call T.zero);
+           set_summary call T.zero);
     List.iter fix (CallGraphLoop.loop_nest callgraph);
-    (query, weight_query, STF.transition)
+    (query, STF.transition)
 
   type t = (T.t label) WG.t
 
-  let path_weight (query, _, f) tgt =
-    f (WG.RecGraph.pathexpr query tgt)
-  let call_weight (query, _, f) call =
-    f (WG.RecGraph.call_pathexpr query call |> Pathexpr.promote)
+  let path_weight (query, eval) tgt =
+    eval (WG.RecGraph.pathexpr query tgt)
+  let call_weight (query, eval) call =
+    eval (WG.RecGraph.call_pathexpr query call |> Pathexpr.promote)
   let omega_path_weight _ _ = assert false
 
   let label_algebra =
@@ -612,11 +610,6 @@ module Make
   end
 
   module IntervalAnalysis = Fixpoint.Make(WGG)(Box)
-  module IntPair = struct
-    type t = int * int [@@deriving ord]
-    let equal (x,y) (x',y') = (x=x' && y=y')
-    let hash = Hashtbl.hash
-  end
 
   module PS = BatSet.Make(IntPair)
   module PHT = BatHashtbl.Make(IntPair)

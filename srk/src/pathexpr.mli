@@ -84,6 +84,12 @@ val eval_nested : ?table:('a table) ->
     not satisfy the given predicate. *)
 val forget : 'a table -> (int -> int -> bool) -> unit
 
+(** Explicit hash table *)
+module Table : sig
+  include BatHashtbl.S with type key = nested t
+  val forget : 'a t -> (int -> int -> bool) -> unit
+end
+
 (** Destruct one layer of the path expression *)
 val destruct : 'a t -> 'a t open_nested_pathexpr
 

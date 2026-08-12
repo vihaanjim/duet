@@ -8,7 +8,6 @@ module Make
      end)
     (Var : sig
        type t
-       val compare : t -> t -> int
        val show : t -> string
        val typ : t -> typ_term
        val symbol_of : t -> symbol
@@ -30,9 +29,11 @@ module Make
     (W : sig
        val wt : int * int -> T.t
        val length : Pathexpr.nested Pathexpr.t -> int VarMap.t
-       val guess_vars : Pathexpr.nested Pathexpr.t -> (int * int) VarMap.t
+       val length_to : int -> int VarMap.t
      end) : sig
 
   val transition : Pathexpr.nested Pathexpr.t -> T.t
+
+  val forget : (int -> int -> bool) -> unit
 
 end

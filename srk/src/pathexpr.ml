@@ -225,6 +225,11 @@ let forget table p =
   in
   HT.filteri_inplace (fun k _ -> safe k) table
 
+module Table = struct
+  include HT
+  let forget = forget
+end
+
 let rec accept_epsilon p =
   match p.obj with
   | Zero -> false

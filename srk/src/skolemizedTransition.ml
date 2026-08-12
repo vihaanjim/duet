@@ -10,7 +10,6 @@ module Make
      end)
     (Var : sig
        type t
-       val compare : t -> t -> int
        val show : t -> string
        val typ : t -> typ_term
        val symbol_of : t -> symbol
@@ -32,18 +31,12 @@ module Make
     (W : sig
        val wt : int * int -> T.t
        val length : Pathexpr.nested Pathexpr.t -> int VarMap.t
-       val guess_vars : Pathexpr.nested Pathexpr.t -> (int * int) VarMap.t
+       val length_to : int -> int VarMap.t
      end)
 = struct
 
   let srk = C.context
 
-  module VarSet = BatSet.Make(Var)
-
-  (* todo: use hashconsing! *)
-  module HT = BatHashtbl
-  let table = HT.create 991
-  
   (* Canonical name for the ith version of a variable *)
   let _var_i_symbol =
     Memo.memo (fun (v, i) ->
@@ -146,15 +139,18 @@ module Make
         vars
         (W.length pe)
     in
-    f pe vars' |> to_tr vars' |> T.exists Var.is_global |> of_tr vars
+    f pe vars' |> to_tr vars' |> T.exists Var.is_global
+    |> of_tr vars
+
+  and table = Pathexpr.Table.create 991 
 
   and f pe vars =
     (* Printf.printf "%s(%d-%d) %s\n" (VarMap.choose vars |> fst |> Var.show) (VarMap.choose vars |> snd |> fst) (VarMap.choose vars |> snd |> snd) (Pathexpr.show pe) ; *)
-    if HT.mem table pe then
-      let (phi, vars') = HT.find table pe in
+    if Pathexpr.Table.mem table pe then
+      let (phi, vars') = Pathexpr.Table.find table pe in
       (* Check if the variables disgree in any place. It's alright if
-         one has some variable and the other doesn't --- that means it
-         doesn't appear in the transition at all. *)
+         some variable appears in one but not the other --- that means
+         it's irrelevant to the transition. *)
       let disagreements =
         VarMap.merge (fun _ lu lu' ->
             match lu, lu' with
@@ -166,12 +162,8 @@ module Make
       in
       if VarMap.is_empty disagreements then phi
       else
-        let _ = Printf.printf "woops:\n" in
-        let _ =
-          VarMap.iter (fun v ((l, u), (l', u')) ->
-              Printf.printf "%s: (%d, %d) != (%d, %d)\n" (Var.show v) l u l' u')
-            disagreements
-        in
+        let _ = Log.logf ~level:`warn "Irreducible program flow" in
+        (* to_tr vars' phi |> of_tr vars *)
         assert false
     else
       let res =
@@ -184,17 +176,40 @@ module Make
         | `One -> one vars
         | `Zero -> zero
       in
-      HT.add table pe (res, vars) ;
+      Pathexpr.Table.add table pe (res, vars) ;
       (* Printf.printf "%s:\n %s\n\n" (Pathexpr.show pe) (Formula.show srk res) ; *)
       res
 
+  let src =
+    let algebra = function
+      | `Edge (s, _) -> Some s
+      | `Star s | `Segment s
+        | `Mul (s, _) | `Add (s, _) -> s
+      | `One | `Zero -> None
+    in
+    let table = Pathexpr.mk_table () in
+    Pathexpr.eval_nested ~table ~algebra
+  
   let transition pe =
     match Pathexpr.destruct pe with
     | `Zero -> T.zero
     | `One -> T.one
     | _ ->
-      let vars = W.guess_vars pe in
-      f pe vars
-      |> to_tr vars
+       (* Guess which variables to use (this is always correct on
+          reducible flow graphs!) *)
+       let pre = match src pe with
+         | Some s -> W.length_to s
+         | None -> VarMap.empty
+       in
+       let vars =
+         VarMap.merge (fun _ l d ->
+                let l = Option.value ~default:0 l in
+                let d = Option.value ~default:0 d in
+                Some (l, l + d))
+           pre (W.length pe)
+       in
+       f pe vars |> to_tr vars
+
+  let forget pred = Pathexpr.Table.forget table pred
 
 end
