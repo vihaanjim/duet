@@ -46,17 +46,14 @@ module Make
             ~name:(Var.show v ^ string_of_int i)
             (Var.typ v :> typ))
   let var_i_symbol v i = _var_i_symbol (v, i)
+  let var_i_term v i = mk_const srk (var_i_symbol v i)
 
   let of_tr vars tr =
-    let (pre_subst, transform) =
-      VarMap.fold (fun v (l, u) (m, trans) ->
-          let const i = mk_const srk (var_i_symbol v i) in
-          (Symbol.Map.add (Var.symbol_of v) (const l) m,
-           if T.mem_transform v tr then (const u, T.get_transform v tr)::trans
-           else if l <> u then (const u, const l)::trans
-           else trans))
+    let subst =
+      VarMap.fold (fun var (l, _) ->
+          Symbol.Map.add (Var.symbol_of var) (var_i_term var l))
         vars
-        (Symbol.Map.empty, [])
+        Symbol.Map.empty
     in
     let fresh_skolem =
       Memo.memo (fun sym ->
@@ -64,17 +61,27 @@ module Make
           let typ = typ_symbol srk sym in
           mk_const srk (mk_symbol srk ~name typ))
     in
-    let freshen s =
-      match Symbol.Map.find_opt s pre_subst with
+    let sigma s =
+      match Symbol.Map.find_opt s subst with
       | Some t -> t
       | None -> fresh_skolem s
     in
     let post_defs =
-      List.map (fun (s, t) ->
-          Term.set_expr srk s (substitute_const srk freshen t))
-        transform
+      VarMap.fold (fun var (l, u) post_defs ->
+          (* We need to include a set expression if this variable is
+             transformed, or otherwise if l and u are different (to
+             make sure that x_l = x_u) *)
+          if T.mem_transform var tr then
+            (Term.set_expr srk (var_i_term var u)
+               (substitute_const srk sigma (T.get_transform var tr))
+            )::post_defs
+          else if l <> u then
+            (Term.set_expr srk (var_i_term var u) (var_i_term var l))::post_defs
+          else post_defs)
+        vars
+        []
     in
-    mk_and srk ((substitute_const srk freshen (T.guard tr))::post_defs)
+    mk_and srk ((substitute_const srk sigma (T.guard tr))::post_defs)
     |> rewrite srk ~up:(SrkSimplify.simplify_terms_rewriter srk % Nonlinear.simplify_terms_rewriter srk)
   
   let to_tr vars phi =
@@ -88,10 +95,9 @@ module Make
     T.construct (substitute_map srk subst (phi)) transform
 
   let one vars =
-    VarMap.fold (fun v (l, u) lst ->
+    VarMap.fold (fun var (l, u) lst ->
            if l <> u then
-             let const i = mk_const srk (var_i_symbol v i) in
-             (Term.set_expr srk (const l) (const u))::lst
+             (Term.set_expr srk (var_i_term var l) (var_i_term var u))::lst
            else lst)
       vars []
     |> mk_and srk
@@ -168,7 +174,7 @@ module Make
     else
       let res =
         match Pathexpr.destruct pe with
-        | `Edge e -> of_tr vars (W.wt e) 
+        | `Edge e -> of_tr vars (W.wt e) in
         | `Mul (left, right) -> mul vars left right
         | `Add (left, right) -> add vars left right
         | `Star pe' -> star vars pe'

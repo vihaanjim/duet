@@ -165,8 +165,7 @@ module Make
       |> T.exists Var.is_global
     in
     let callgraph = mk_callgraph query in
-    let rec fix =
-      function
+    let rec fix = function
       | `Vertex call ->
          summarize call
          |> set_summary call
