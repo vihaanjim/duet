@@ -169,12 +169,11 @@ module Make
       if VarMap.is_empty disagreements then phi
       else
         let _ = Log.logf ~level:`warn "Irreducible program flow" in
-        (* to_tr vars' phi |> of_tr vars *)
-        assert false
+        to_tr vars' phi |> of_tr vars
     else
       let res =
         match Pathexpr.destruct pe with
-        | `Edge e -> of_tr vars (W.wt e) in
+        | `Edge e -> of_tr vars (W.wt e)
         | `Mul (left, right) -> mul vars left right
         | `Add (left, right) -> add vars left right
         | `Star pe' -> star vars pe'
