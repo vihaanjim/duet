@@ -17,10 +17,8 @@
     camlidl
     apron
     z3
-    ntl
     ocamlgraph
     normalizffi
-    faugere
     flint
     ))
 

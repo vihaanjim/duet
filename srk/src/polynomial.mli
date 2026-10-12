@@ -210,6 +210,10 @@ module type Multivariate = sig
   (** The set of dimensions that appear in a polynomial *)
   val dimensions : t -> SrkUtil.Int.Set.t
 
+  (** The smallest and largest dimensions that appear in a polynomial, or
+     [None] if the polynomial is constant *)
+  val var_range : t -> (int * int) option
+
   (** Maximum total degree of a monomial term *)
   val degree : t -> int
 
@@ -227,6 +231,12 @@ module QQXs : sig
 
   val pp : (Format.formatter -> int -> unit) -> Format.formatter -> t -> unit
   val compare : t -> t -> int
+
+  (** [resultant variable p q] eliminates [variable] from [p] and [q].
+      Nonnegative SRK dimensions are used directly as FLINT variable indices;
+      callers may renumber dimensions first if compact coordinates are needed.
+      Returns [None] if FLINT cannot perform the computation. *)
+  val resultant : Monomial.dim -> t -> t -> t option
 
   (** Convert a rational vector to a linear polynomial, where each dimension
       corresponds to a variable except the designated [const] dimension, which
@@ -336,78 +346,15 @@ module Rewrite : sig
   (** Is one rewrite equal to another? *)
   val equal : t -> t -> bool
 
+  (** Does the rewrite system reduce the polynomial to zero? *)
+  val reduce_zero : t -> QQXs.t -> bool
+
   (** Find the subset of rewrites that only refer to monomials satisfying the
      given predicate.  Assuming that the rewrite is a grobner basis and the set of
      monomials satisfying the predicate is downwards-closed w.r.t. the
      monomial ordering, this is a grobner basis for the intersection of the ideal
       and the space of polynomials over the given set of monomials *)
   val restrict : (Monomial.t -> bool) -> t -> t
-end
-
-(** A polynomial ideal is a set of polynomials that is closed under
-   addition, and is closed under multiplication by any polynomial. *)
-module Ideal : sig
-  type t
-
-  (** Pretty print *)
-  val pp : (Format.formatter -> int -> unit) -> Format.formatter -> t -> unit
-
-  (** Compute the smallest ideal that contains a given set of polynomials *)
-  val make : QQXs.t list -> t
-
-  val add_saturate : t -> QQXs.t -> t
-
-  val reduce : t -> QQXs.t -> QQXs.t
-
-  (** Compute a finite set of polynomials that generates the given
-     ideal.  Note [make (generators i) = i], but [generators (make g)]
-     is not necessarily equal to [g]. *)
-  val generators : t -> QQXs.t list
-
-  (** Is one ideal contained inside another? *)
-  val subset : t -> t -> bool
-
-  (** Is one ideal equal to another? *)
-  val equal : t -> t -> bool
-
-  (** Does an ideal contain a given polynomial? *)
-  val mem : QQXs.t -> t -> bool
-
-  (** Intersect two ideals. *)
-  val intersect : t -> t -> t
-
-  (** Compute the ideal consisting of all products of polynomials
-     belonging to the two given ideals *)
-  val product : t -> t -> t
-
-  (** Compute the ideal consisting of all sums of polynomials beloning
-     to the two given ideals *)
-  val sum : t -> t -> t
-
-  (** Compute the ideal consisting of all polynomials in the given
-     ideal that are defined only over dimensions satisfying the given
-     predicate. *)
-  val project : (int -> bool) -> t -> t
-
-  (** Make a rewrite system from the given ideal.*)
-  val mk_rewrite : t -> Rewrite.t
-end
-
-(**Grobner basis computation using the FGb library.*)
-module FGb : sig
-  (**[grobner_basis block1 block2 polys] computes a Grobner basis of the polynomials in [polys] within the ring Q\[block1, block2\]. 
-  The monomial order used in the computation is a block ordering defined by the variables in [block1] and [block2] with [block1] >> [block2]. That is,
-  for any monomials m1 and m2 where, m1 contains variables in [block1] but m2 does not, m1>m2. The monomial order within each block is degree reverse
-  lexicographic defined by the order of the variables in the given list. That is [grobner_basis \["x"; "y"; "z"\] \[\] polys] defines a drl order with [x] > [y] > [z].
-  As in the previous example [block2] can be empty, indicated a normal drl order. However, [block1] must be non-empty. For the input polynomials to be 
-  well formed the variables in [polys] need to be in the set [block1 @ block2]. *)
-  val grobner_basis : Monomial.dim list -> Monomial.dim list -> QQXs.t list -> QQXs.t list
-
-  (**[get_mon_order block1 block2] should return the monomial ordering used in the Grobner basis computation [grobner_basis block1 block2 polys].*)
-  val get_mon_order : Monomial.dim list -> Monomial.dim list -> Monomial.t -> Monomial.t -> [`Eq | `Lt | `Gt]
-
-  (**Use the FGb package when calling FGb.grobner_basis when set to true. Otherwise use Rewrite.grobner_basis.*)
-  val use_fgb : bool ref
 end
 
 

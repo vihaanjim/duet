@@ -29,7 +29,11 @@ let suite = "Main" >::: [
     Test_WeightedGraph.suite;
     Test_chc.suite;
     Test_numberField.suite;
-    Test_rational.suite
+    Test_rational.suite;
+    Test_intLattice.suite;
+    Test_polynomialLattice.suite;
+    Test_polynomialConeCpClosure.suite;
+    Test_msolve.suite
 ]
 
 let _ =

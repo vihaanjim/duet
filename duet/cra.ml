@@ -595,6 +595,15 @@ let weight def =
     Log.errorf "No translation for definition: %a" Def.pp def;
     assert false
 
+(* Monotone analysis in LIRA requires linear transitions *)
+let linearize_weight tr =
+  if Syntax.get_theory srk = `LIRA && !monotone then
+    K.linearize tr
+  else tr
+
+let weight def = linearize_weight (weight def)
+
+
 type 'a label = 'a TransitionSystem.label =
   | Weight of 'a
   | Call of int * int
@@ -775,7 +784,7 @@ let make_transition_system rg =
                 | Assert (phi, msg) ->
                   let condition = tr_bexpr phi in
                   add_assert def.did (condition, Def.get_location def, msg);
-                  Weight (K.assume condition)
+                  Weight (linearize_weight (K.assume condition))
                 | AssertMemSafe (expr, msg) ->
                   let condition =
                     match tr_expr expr with
@@ -787,7 +796,7 @@ let make_transition_system rg =
                       ]
                   in
                   add_assert def.did (condition, Def.get_location def, msg);
-                  Weight (K.assume condition)
+                  Weight (linearize_weight (K.assume condition))
                 | _ -> Weight (weight def)
               in
               RG.G.fold_succ
@@ -868,15 +877,15 @@ let analyze file =
               K.get_transform v path
             | _ -> Ctx.mk_const sym
           in
+          let phi =
+            if Syntax.get_theory srk = `LIRA && !monotone then
+              Nonlinear.uninterpret srk phi
+            else phi
+          in
           let phi = Syntax.substitute_const Ctx.context sigma phi in
           let path_condition =
             Ctx.mk_and [K.guard path; Ctx.mk_not phi]
             |> SrkSimplify.simplify_terms srk
-          in
-          let path_condition =
-            if Syntax.get_theory srk = `LIRA && !monotone then
-              Nonlinear.uninterpret srk path_condition
-            else path_condition
           in
           logf "Path condition to %s:%d:@\n%a"
             loc.Cil.file
@@ -1317,7 +1326,7 @@ let _ =
          K.domain := product [ LirrInvariants.exp
                              ; LIRRGuard.exp
                              ; SolvablePolynomial.SolvablePolynomialLIRR.exp ]),
-     " Use weak arithmetic theory with solvable polynomial maps");
+     " Use weak arithmetic theory with solvable polynomial maps (requires msolve)");
   CmdLine.register_config
     ("-lirr-usp",
      Arg.Unit (fun () ->
@@ -1326,7 +1335,7 @@ let _ =
         K.domain := product [ SolvablePolynomial.UltSolvablePolynomialLIRR.exp
                             ; LIRRGuard.exp
                             ; LirrInvariants.exp ]),
-    " Use weak arithmetic theory with ultimately solvable polynomial maps");
+    " Use weak arithmetic theory with ultimately solvable polynomial maps (requires msolve)");
   CmdLine.register_config
     ("-lirr-sp-quad",
      Arg.Unit (fun () ->
@@ -1336,7 +1345,7 @@ let _ =
                             ; SolvablePolynomial.SolvablePolynomialLIRRQuadratic.exp
                             ; LIRRGuard.exp
                             ; LirrInvariants.exp ]),
-    " Use weak arithmetic theory with solvable polynomial maps using quadratic simulations");
+    " Use weak arithmetic theory with solvable polynomial maps using quadratic simulations (requires msolve)");
   CmdLine.register_config
     ("-termination-no-exp",
      Arg.Clear termination_exp,
@@ -1374,9 +1383,9 @@ let _ =
      Arg.Clear precondition,
      " Synthesize mortal preconditions");
   CmdLine.register_config
-    ("-no-fgb",
-     Arg.Clear Polynomial.FGb.use_fgb,
-     " Do not use fgb in any Grobner basis computation"
+    ("-no-msolve",
+     Arg.Clear Ideal.use_msolve,
+     " Use Buchberger's algorithm instead of msolve for ideal computations"
     );
   CmdLine.register_config
     ("-theory",
