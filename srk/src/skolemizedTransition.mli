@@ -9,7 +9,7 @@ module Make
     (Var : sig
        type t
        val show : t -> string
-       val typ : t -> typ_term
+       val typ : t -> typ_fo
        val symbol_of : t -> symbol
        val is_global : t -> bool
      end)
@@ -19,7 +19,7 @@ module Make
        val construct : C.t formula -> (var * C.t term) list -> t
        val guard : t -> C.t formula
        val mem_transform : var -> t -> bool
-       val get_transform : var -> t -> C.t term
+       val get_transform : var -> t -> (C.t, typ_fo) expr
        val zero : t
        val one : t
        val star : t -> t

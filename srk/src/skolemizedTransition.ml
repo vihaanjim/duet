@@ -11,7 +11,7 @@ module Make
     (Var : sig
        type t
        val show : t -> string
-       val typ : t -> typ_term
+       val typ : t -> typ_fo
        val symbol_of : t -> symbol
        val is_global : t -> bool
      end)
@@ -21,7 +21,7 @@ module Make
        val construct : C.t formula -> (var * C.t term) list -> t
        val guard : t -> C.t formula
        val mem_transform : var -> t -> bool
-       val get_transform : var -> t -> C.t term
+       val get_transform : var -> t -> (C.t, typ_fo) expr
        val zero : t
        val one : t
        val star : t -> t
@@ -72,11 +72,11 @@ module Make
              transformed, or otherwise if l and u are different (to
              make sure that x_l = x_u) *)
           if T.mem_transform var tr then
-            (Term.set_expr srk (var_i_term var u)
+            (mk_eq srk (var_i_term var u)
                (substitute_const srk sigma (T.get_transform var tr))
             )::post_defs
           else if l <> u then
-            (Term.set_expr srk (var_i_term var u) (var_i_term var l))::post_defs
+            (mk_eq srk (var_i_term var u) (var_i_term var l))::post_defs
           else post_defs)
         vars
         []
@@ -97,7 +97,7 @@ module Make
   let one vars =
     VarMap.fold (fun var (l, u) lst ->
            if l <> u then
-             (Term.set_expr srk (var_i_term var l) (var_i_term var u))::lst
+             (mk_eq srk (var_i_term var l) (var_i_term var u))::lst
            else lst)
       vars []
     |> mk_and srk

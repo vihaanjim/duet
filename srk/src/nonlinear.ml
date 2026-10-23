@@ -377,11 +377,7 @@ let linearize srk phi =
       let nonlinear_eqs =
         let nonlinear_defs =
           Symbol.Map.enum nonlinear
-          /@ (fun (symbol, expr) ->
-              match Expr.refine srk expr with
-              | `ArithTerm t -> mk_eq srk (mk_const srk symbol) t
-              | `ArrTerm t -> mk_arr_eq srk (mk_const srk symbol) t
-              | `Formula phi -> mk_iff srk (mk_const srk symbol) phi)
+          /@ (fun (symbol, expr) -> mk_eq srk (mk_const srk symbol) expr)
           |> BatList.of_enum
           |> mk_and srk
         in
@@ -389,7 +385,9 @@ let linearize srk phi =
           Abstract.affine_hull
             srk
             (mk_and srk [lin_phi; nonlinear_defs])
-            (Symbol.Map.keys nonlinear |> BatList.of_enum)
+            (Symbol.Map.keys nonlinear
+             |> BatEnum.filter (fun sym -> is_arith_typ (typ_symbol srk sym))
+             |> BatList.of_enum)
         in
         List.map (mk_eq srk (mk_real srk QQ.zero)) hull |> mk_and srk
       in

@@ -19,7 +19,7 @@ module Make
        type t
        val pp : Format.formatter -> t -> unit
        val show : t -> string
-       val typ : t -> typ_term
+       val typ : t -> typ_fo
        val compare : t -> t -> int
        val symbol_of : t -> symbol
        val of_symbol : symbol -> t option
@@ -33,9 +33,9 @@ module Make
        val pp : Format.formatter -> t -> unit
        val construct : C.t formula -> (var * C.t term) list -> t
        val guard : t -> C.t formula
-       val transform : t -> (var * C.t term) BatEnum.t
+       val transform : t -> (var * (C.t, typ_fo) expr) BatEnum.t
        val mem_transform : var -> t -> bool
-       val get_transform : var -> t -> C.t term
+       val get_transform : var -> t -> (C.t, typ_fo) expr
        val defines : t -> var list
        val uses : t -> var list
        val assume : C.t formula -> t
@@ -360,55 +360,60 @@ module Make
                   (fun v _ -> not (Var.is_global v))
                   store)
       | Store store, Weight tr ->
-         let guards = ref [T.guard tr] in
-         let push_guard x = guards := x::(!guards) in
-         uses tr |> List.iter (fun v ->
-                        if VarMap.mem v store then
-                          let ivl = VarMap.find v store in
-                          let t = mk_const srk (Var.symbol_of v) in
-                          begin match Interval.lower ivl with
-                          | Some lo -> push_guard (mk_leq srk (mk_real srk lo) t)
-                          | None -> ()
-                          end;
-                          begin match Interval.upper ivl with
-                          | Some hi -> push_guard (mk_leq srk t (mk_real srk hi))
-                          | None -> ()
-                          end);
-         let guard = mk_and srk (!guards) in
-         (* variables used/defined by tr *)
-         let vars = VarSet.elements (abstract_defs tr) in
-         let objectives =
-           List.map (fun v ->
-               if T.mem_transform v tr then
-                 T.get_transform v tr
-               else
-                 mk_const srk (Var.symbol_of v))
-             vars
-           |> List.filter_map (fun t -> match Term.refine srk t with |`ArithTerm at -> Some at | `ArrTerm _ -> None) 
-         in
-         let result =
-           match Nonlinear.optimize_box ~context srk guard objectives with
-           | `Sat intervals ->
-              let store' =
-                List.fold_left2
-                  (fun m v ivl ->
-                    if Interval.equal ivl Interval.top then
-                      VarMap.remove v m
-                    else
-                      VarMap.add v ivl m)
-                  store
-                  vars
-                  intervals
+        let guards = ref [T.guard tr] in
+        let push_guard x = guards := x::(!guards) in
+        uses tr |> List.iter (fun v ->
+            if VarMap.mem v store then
+              let ivl = VarMap.find v store in
+              let t = mk_const srk (Var.symbol_of v) in
+              begin match Interval.lower ivl with
+                | Some lo -> push_guard (mk_leq srk (mk_real srk lo) t)
+                | None -> ()
+              end;
+              begin match Interval.upper ivl with
+                | Some hi -> push_guard (mk_leq srk t (mk_real srk hi))
+                | None -> ()
+              end);
+        let guard = mk_and srk (!guards) in
+        (* variables used/defined by tr *)
+        let vars = VarSet.elements (abstract_defs tr) in
+        let (vars, objectives) =
+          List.filter_map (fun v ->
+              let t =
+                if T.mem_transform v tr then
+                  T.get_transform v tr
+                else
+                  mk_const srk (Var.symbol_of v)
               in
-              Store store'
-           | `Unsat -> Bottom
-           | `Unknown ->
-              Store (BatEnum.fold
-                       (fun m (v, _) -> VarMap.remove v m)
-                       store
-                       (T.transform tr))
-         in
-         result
+              match Expr.refine srk t with
+              | `ArithTerm at -> Some (v, at)
+              | `ArrTerm _ | `Formula _ -> None)
+            vars
+          |> List.split
+        in
+        let result =
+          match Nonlinear.optimize_box ~context srk guard objectives with
+          | `Sat intervals ->
+            let store' =
+              List.fold_left2
+                (fun m v ivl ->
+                   if Interval.equal ivl Interval.top then
+                     VarMap.remove v m
+                   else
+                     VarMap.add v ivl m)
+                store
+                vars
+                intervals
+            in
+            Store store'
+          | `Unsat -> Bottom
+          | `Unknown ->
+            Store (BatEnum.fold
+                     (fun m (v, _) -> VarMap.remove v m)
+                     store
+                     (T.transform tr))
+        in
+        result
   end
 
   module PredicateSet = struct
@@ -454,6 +459,7 @@ module Make
             (symbols predicate)
         in
         VarSet.elements (PS.fold add_vars predicates VarSet.empty)
+        |> List.filter (fun v -> is_arith_typ (Var.typ v))
       in
       let objectives =
         List.map (fun v -> mk_const srk (Var.symbol_of v)) variables
@@ -918,50 +924,50 @@ module Make
     let update ~pre weight ~post =
       match weight with
       | Weight tr ->
-         (* Replace modified variable symbols with fresh Skolem
-            constants.  This allows the post-condition of the
-            transition formula tf to be expressed over the symbols
-            associated with the variables via Var.of_symbol /
-            Var.symbol_of *)
-         let subst =
-           BatEnum.fold (fun subst (v, _) ->
-               let pre_sym = mk_symbol srk ((Var.typ v) :> typ) in
-               let post_sym = Var.symbol_of v in
-               Symbol.Map.add post_sym (mk_const srk pre_sym) subst)
-             Symbol.Map.empty
-             (T.transform tr)
-         in
-         let transform_eqs =
-           T.transform tr
-           /@ (fun (v, t) ->
-             let s =  substitute_map srk subst t in 
-             Term.set_expr srk (mk_const srk (Var.symbol_of v)) s
-           )
-           |> BatList.of_enum
-         in
-         let pre_formula = domain.formula_of pre in
-         let tf =
-           mk_and srk (substitute_map srk subst (T.guard tr)
-                       ::substitute_map srk subst pre_formula
-                       ::transform_eqs)
-           |> Nonlinear.uninterpret srk
-         in
-         let symbols = (* Symbols in pre or defined by tr *)
-           VarSet.fold
-             (fun v set ->
+        (* Replace modified variable symbols with fresh Skolem
+           constants.  This allows the post-condition of the
+           transition formula tf to be expressed over the symbols
+           associated with the variables via Var.of_symbol /
+           Var.symbol_of *)
+        let subst =
+          BatEnum.fold (fun subst (v, _) ->
+              let pre_sym = mk_symbol srk ((Var.typ v) :> typ) in
+              let post_sym = Var.symbol_of v in
+              Symbol.Map.add post_sym (mk_const srk pre_sym) subst)
+            Symbol.Map.empty
+            (T.transform tr)
+        in
+        let transform_eqs =
+          T.transform tr
+          /@ (fun (v, t) ->
+              let s =  substitute_map srk subst t in 
+              mk_eq srk (mk_const srk (Var.symbol_of v)) s
+              )
+          |> BatList.of_enum
+        in
+        let pre_formula = domain.formula_of pre in
+        let tf =
+          mk_and srk (substitute_map srk subst (T.guard tr)
+                      ::substitute_map srk subst pre_formula
+                      ::transform_eqs)
+          |> Nonlinear.uninterpret srk
+        in
+        let symbols = (* Symbols in pre or defined by tr *)
+          VarSet.fold
+            (fun v set ->
                Symbol.Set.add (Var.symbol_of v) set)
-             (references tr)
-             (Symbol.Set.filter
-                (fun s -> Var.of_symbol s != None)
-                (symbols pre_formula))
-           |> Symbol.Set.elements
-         in
-         let solver = Abstract.Solver.make ~theory:`LIRA srk tf in
-         let post' = domain.abstract solver symbols post in
-         if domain.equal post' post then
-           None
-         else
-           Some post'
+            (references tr)
+            (symbols pre_formula)
+          |> Symbol.Set.filter (fun s ->
+              Var.of_symbol s != None && is_arith_typ (typ_symbol srk s))
+          |> Symbol.Set.elements
+        in
+        let solver = Abstract.Solver.make ~theory:`LIRA srk tf in
+        let post' = domain.abstract solver symbols post in
+        if domain.equal post' post then
+          None
+        else
+          Some post'
 
       | Call (_, _) ->
          let is_local s =

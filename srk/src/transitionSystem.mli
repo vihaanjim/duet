@@ -13,7 +13,7 @@ module Make
        type t
        val pp : Format.formatter -> t -> unit
        val show : t -> string
-       val typ : t -> typ_term
+       val typ : t -> typ_fo
        val compare : t -> t -> int
        val symbol_of : t -> symbol
        val of_symbol : symbol -> t option
@@ -27,9 +27,9 @@ module Make
        val pp : Format.formatter -> t -> unit
        val construct : C.t formula -> (var * C.t term) list -> t
        val guard : t -> C.t formula
-       val transform : t -> (var * C.t term) BatEnum.t
+       val transform : t -> (var * (C.t, typ_fo) expr) BatEnum.t
        val mem_transform : var -> t -> bool
-       val get_transform : var -> t -> C.t term
+       val get_transform : var -> t -> (C.t, typ_fo) expr
        val uses : t -> var list
        val defines : t -> var list
        val assume : C.t formula -> t
