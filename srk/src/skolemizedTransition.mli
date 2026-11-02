@@ -12,6 +12,7 @@ module Make
        val typ : t -> typ_fo
        val symbol_of : t -> symbol
        val is_global : t -> bool
+       val compare : t -> t -> int
      end)
     (T : sig
        type t
@@ -20,20 +21,31 @@ module Make
        val guard : t -> C.t formula
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> (C.t, typ_fo) expr
+       val defines : t -> var list
+       val uses : t -> var list
        val zero : t
        val one : t
        val star : t -> t
        val exists : (Var.t -> bool) -> t -> t
-     end)
-    (VarMap : BatMap.S with type key = Var.t)
-    (W : sig
-       val wt : int * int -> T.t
-       val length : Pathexpr.nested Pathexpr.t -> int VarMap.t
-       val length_to : int -> int VarMap.t
      end) : sig
 
-  val transition : Pathexpr.nested Pathexpr.t -> T.t
+  type query
 
-  val forget : (int -> int -> bool) -> unit
+  type edge_weight =
+    | Transition of T.t
+    | Call of int * int
+
+  val summarize_iterative : weight:(int -> int -> edge_weight) ->
+                            WeightedGraph.RecGraph.t ->
+                            int ->
+                            ?delay:int ->
+                            (module WeightedGraph.AbstractWeight
+                                    with type weight = T.t) ->
+                            query
+
+  val path_weight : query -> WeightedGraph.vertex -> T.t
+
+  val call_weight : query -> WeightedGraph.RecGraph.call -> T.t
+  val omega_path_weight : query -> (T.t,'b) Pathexpr.omega_algebra -> 'b
 
 end

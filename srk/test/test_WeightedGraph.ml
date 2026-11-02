@@ -83,17 +83,17 @@ let mk_ts edges call_edges =
   in
   rg
 
-(* module TransitionDom = struct *)
-(*   type weight = T.t *)
-(*   type abstract_weight = T.t *)
-(*   let concretize x = x *)
-(*   let abstract x = x *)
-(*   let equal = T.equal *)
-(*   let widen = T.widen *)
-(* end *)
+module TransitionDom = struct
+  type weight = T.t
+  type abstract_weight = T.t
+  let concretize x = x
+  let abstract x = x
+  let equal = T.equal
+  let widen = T.widen
+end
 
 let mk_query edges call_edges src =
-  TS.mk_query (mk_ts edges call_edges) src
+  TS.mk_query (mk_ts edges call_edges) src (module TransitionDom)
     
 let pe_context = Pathexpr.mk_context ()
 
@@ -224,15 +224,15 @@ let multiple_params () =
   let open Infix in
   let query =
     mk_query
-      [ (0, T.arith_assign "i" (int 0), 1);
+      [ (0, T.assign "i" (int 0), 1);
         (1, T.parallel_assign [("x", i); ("y", (int 1 :> Ctx.t Syntax.term))], 2);
-        (3, T.arith_assign "i" z, 4);
+        (3, T.assign "i" z, 4);
         (4, T.parallel_assign [("x", i); ("y", (int 1 :> Ctx.t Syntax.term))], 5);
-        (6, T.arith_assign "i" z, 7);
+        (6, T.assign "i" z, 7);
         (10, T.assume (x = int 0), 11);
         (11, T.assume (y = int 1), 12);
-        (12, T.arith_assign "z" (x + y), 13);
-        (20, T.arith_assign "z" (x - y), 21)
+        (12, T.assign "z" (x + y), 13);
+        (20, T.assign "z" (x - y), 21)
       ]
       [ (2, (10, 13), 3);
         (5, (20, 21), 6)
@@ -541,8 +541,8 @@ let suite = "WeightedGraph" >::: [
       let open Infix in
       let query =
         mk_query
-          [(0, T.arith_assign "x" (int 0), 1);
-           (5, T.arith_assign "x" (x + (int 1)), 6)]
+          [(0, T.assign "x" (int 0), 1);
+           (5, T.assign "x" (x + (int 1)), 6)]
           [(1, (5, 6), 2);
            (2, (5, 6), 3);
            (3, (5, 6), 4)]

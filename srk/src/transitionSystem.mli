@@ -56,7 +56,10 @@ module Make
 
   (** Create a query structure.  The optional [delay] parameter specifies the
       widening delay to use during summary computation. *)
-  val mk_query : ?delay:int -> t -> vertex -> query
+  val mk_query : ?delay:int -> t -> vertex ->
+                 (module WeightedGraph.AbstractWeight
+                         with type weight = T.t) ->
+                 query
 
   (** Over-approximate the sum of the weights of all paths from the
      query's source vertex to the given target vertex. *)
@@ -69,8 +72,6 @@ module Make
   (** Over-approximate the sum of the weights of all infinite paths
      starting at a given vertex. *)
   val omega_path_weight : query -> (transition,'b) Pathexpr.omega_algebra -> 'b
-
-  (* val path_formula : t -> vertex -> vertex -> transition *)
 
   (** Project out local variables from each transition that are referenced
       only by that transition. *)
