@@ -175,10 +175,10 @@ module Solver = struct
     | `LIRA s -> Smt.StdSolver.add s [not_phi]
     | `LIRR s -> Lirr.Solver.add s [not_phi]
 
-  let get_model s =
+  let get_model ?(assumptions=[]) s =
     match s.solver with
     | `LIRA smt_solver ->
-      begin match Smt.StdSolver.get_model smt_solver with
+      begin match Smt.StdSolver.get_model ~assumptions smt_solver with
         | `Unsat -> `Unsat
         | `Unknown -> `Unknown
         | `Sat m ->
@@ -186,7 +186,7 @@ module Solver = struct
           `Sat (`LIRA m)
       end
     | `LIRR smt_solver ->
-      begin match Lirr.Solver.get_model smt_solver with
+      begin match Lirr.Solver.get_model ~assumptions smt_solver with
         | `Unsat -> `Unsat
         | `Unknown -> `Unknown
         | `Sat m ->
@@ -194,8 +194,8 @@ module Solver = struct
           `Sat (`LIRR m)
       end
 
-  let check s =
-    match get_model s with
+  let check ?(assumptions=[]) s =
+    match get_model ~assumptions s with
     | `Sat _ -> `Sat
     | `Unsat -> `Unsat
     | `Unknown -> `Unknown

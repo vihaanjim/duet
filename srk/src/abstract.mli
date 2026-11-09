@@ -61,9 +61,9 @@ module Solver : sig
 
   (** Retrieve a model of the formula that not satisfy any blocking clause, if
      possible.  *)
-  val get_model : 'a t -> [ `Sat of 'a smt_model | `Unsat | `Unknown ]
+  val get_model : ?assumptions:('a formula list) -> 'a t -> [ `Sat of 'a smt_model | `Unsat | `Unknown ]
 
-  val check : 'a t -> [ `Sat | `Unsat | `Unknown ]
+  val check : ?assumptions:('a formula list) -> 'a t -> [ `Sat | `Unsat | `Unknown ]
 
   val get_context : 'a t -> 'a context
 

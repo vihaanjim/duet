@@ -16,14 +16,16 @@ module Solver = struct
     ; symbols : (symbol * symbol) list
     (* For wedge_hull, need to maintain formulas without preprocessing *)
     ; stack : ('a Formula.t list) A.t
-    ; constants : Symbol.Set.t }
+    ; constants : Symbol.Set.t
+    ; default_assumptions : 'a Formula.t list ref }
 
   let make srk ?(theory=get_theory srk) tf =
     let stack = A.singleton [TF.formula tf] in
     { solver = Abstract.Solver.make srk ~theory (TF.formula tf)
     ; symbols = TF.symbols tf
     ; stack = stack
-    ; constants = TF.symbolic_constants tf }
+    ; constants = TF.symbolic_constants tf
+    ; default_assumptions = ref [] }
 
 
   let get_theory s = Abstract.Solver.get_theory s.solver
@@ -69,9 +71,25 @@ module Solver = struct
     Abstract.Solver.add s.solver formulas;
     A.upd s.stack (A.length s.stack - 1) (fun xs -> formulas@xs)
 
-  let check s = Abstract.Solver.check s.solver
+  let set_default_assumptions s assumptions =
+    s.default_assumptions := assumptions
 
-  let get_model s = Abstract.Solver.get_model s.solver
+  let clear_default_assumptions s =
+    s.default_assumptions := []
+
+  let check ?(assumptions=None) s =
+    let assumptions = match assumptions with
+      | None -> !(s.default_assumptions)
+      | Some l -> l
+    in
+    Abstract.Solver.check ~assumptions s.solver
+
+  let get_model ?(assumptions=None) s =
+    let assumptions = match assumptions with
+      | None -> !(s.default_assumptions)
+      | Some l -> l
+    in
+    Abstract.Solver.get_model ~assumptions s.solver
 
   let abstract s = Abstract.Solver.abstract s.solver
 
@@ -119,12 +137,15 @@ module type WedgeDomain = sig
   val wedge_exp : 'a wedge_exp_op
 end
 
-let closure exp solver =
+let closure ?(assumptions=[]) exp solver =
   let srk = Solver.get_context solver in
   let loop_counter_sym = mk_symbol srk ~name:"K" `TyInt in
   let loop_counter = mk_const srk loop_counter_sym in
-  mk_and srk [ exp solver loop_counter
-             ; mk_leq srk (mk_zero srk) loop_counter]
+  (* TODO: remove hack! *)
+  Solver.set_default_assumptions solver assumptions ;
+  let phi = exp solver loop_counter in
+  Solver.clear_default_assumptions solver ;
+  mk_and srk [ phi ; mk_leq srk (mk_zero srk) loop_counter]
 
 let product exps solver loop_counter =
   List.map (fun exp -> exp solver loop_counter) exps

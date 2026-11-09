@@ -24,9 +24,9 @@ module Solver : sig
 
   (** Retrieve a model of the formula that not satisfy any blocking clause, if
      possible.  *)
-  val get_model : 'a t -> [ `Sat of 'a Abstract.smt_model | `Unsat | `Unknown ]
+  val get_model : ?assumptions:('a formula list option) -> 'a t -> [ `Sat of 'a Abstract.smt_model | `Unsat | `Unknown ]
 
-  val check : 'a t -> [ `Sat | `Unsat | `Unknown ]
+  val check : ?assumptions:('a formula list option) -> 'a t -> [ `Sat | `Unsat | `Unknown ]
 
   val get_context : 'a t -> 'a context
 
@@ -43,6 +43,12 @@ module Solver : sig
 
   (** Pop last entry off of the solver's stack *)
   val pop : 'a t -> unit
+
+  (** Set the default assumption literals used when retreiving
+      models. TODO: remove this hack! *)
+  val set_default_assumptions : 'a t -> 'a formula list -> unit
+
+  val clear_default_assumptions : 'a t -> unit
 
   val get_abstract_solver : 'a t -> 'a Abstract.Solver.t
 
@@ -141,7 +147,7 @@ val phase_mp : 'a context ->
 
 val product : 'a exp_op list -> 'a exp_op
 
-val closure : 'a exp_op -> 'a Solver.t -> 'a formula
+val closure : ?assumptions:('a formula list) -> 'a exp_op -> 'a Solver.t -> 'a formula
 
 val wedge_product : 'a wedge_exp_op list -> 'a wedge_exp_op
 
