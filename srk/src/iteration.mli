@@ -24,9 +24,9 @@ module Solver : sig
 
   (** Retrieve a model of the formula that not satisfy any blocking clause, if
      possible.  *)
-  val get_model : ?assumptions:('a formula list option) -> 'a t -> [ `Sat of 'a Abstract.smt_model | `Unsat | `Unknown ]
+  val get_model : ?assumptions:('a formula list) -> 'a t -> [ `Sat of 'a Abstract.smt_model | `Unsat | `Unknown ]
 
-  val check : ?assumptions:('a formula list option) -> 'a t -> [ `Sat | `Unsat | `Unknown ]
+  val check : ?assumptions:('a formula list) -> 'a t -> [ `Sat | `Unsat | `Unknown ]
 
   val get_context : 'a t -> 'a context
 
@@ -36,6 +36,13 @@ module Solver : sig
      with the solver. *)
   val add : 'a t -> ('a formula) list -> unit
 
+  (** [add_assumptions s bs] returns a modified version of [s] with
+      the added assumption literals [bs]. The resulting solver is
+      equivalent to if you had performed [add s bs]. However, by
+      retaining the unmodified version of [s], you can get the
+      original state back without clobbering learned clauses. *)
+  val add_assumptions : 'a t -> 'a formula list -> 'a t
+
   (** Push a fresh entry onto the solver's stack.  Assertions added to the
      formula with [add] are reverted after the entry is [pop]ed off the
      stack. *)
@@ -43,10 +50,6 @@ module Solver : sig
 
   (** Pop last entry off of the solver's stack *)
   val pop : 'a t -> unit
-
-  (** Set the default assumption literals used when retreiving models.
-      TODO: remove this hack! *)
-  val wrap_assumptions : 'a t -> 'a formula list -> 'a t
 
   val get_abstract_solver : 'a t -> 'a Abstract.Solver.t
 

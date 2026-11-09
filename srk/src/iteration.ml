@@ -71,15 +71,15 @@ module Solver = struct
     Abstract.Solver.add s.solver formulas;
     A.upd s.stack (A.length s.stack - 1) (fun xs -> formulas@xs)
 
-  let wrap_assumptions s assumptions =
-    { s with default_assumptions = assumptions }
+  let add_assumptions s assumptions =
+    { s with default_assumptions = assumptions @ s.default_assumptions }
 
-  let check ?(assumptions=None) s =
-    let assumptions = Option.value ~default:s.default_assumptions assumptions in
+  let check ?(assumptions=[]) s =
+    let assumptions = s.default_assumptions @ assumptions in
     Abstract.Solver.check ~assumptions s.solver
 
-  let get_model ?(assumptions=None) s =
-    let assumptions = Option.value ~default:s.default_assumptions assumptions in
+  let get_model ?(assumptions=[]) s =
+    let assumptions = s.default_assumptions @ assumptions in
     Abstract.Solver.get_model ~assumptions s.solver
 
   let abstract s = Abstract.Solver.abstract s.solver
@@ -133,7 +133,7 @@ let closure ?(assumptions=[]) exp solver =
   let loop_counter_sym = mk_symbol srk ~name:"K" `TyInt in
   let loop_counter = mk_const srk loop_counter_sym in
   (* TODO: remove hack! *)
-  let solver = Solver.wrap_assumptions solver assumptions in
+  let solver = Solver.add_assumptions solver assumptions in
   let phi = exp solver loop_counter in
   mk_and srk [ phi ; mk_leq srk (mk_zero srk) loop_counter]
 
