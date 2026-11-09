@@ -44,11 +44,9 @@ module Solver : sig
   (** Pop last entry off of the solver's stack *)
   val pop : 'a t -> unit
 
-  (** Set the default assumption literals used when retreiving
-      models. TODO: remove this hack! *)
-  val set_default_assumptions : 'a t -> 'a formula list -> unit
-
-  val clear_default_assumptions : 'a t -> unit
+  (** Set the default assumption literals used when retreiving models.
+      TODO: remove this hack! *)
+  val wrap_assumptions : 'a t -> 'a formula list -> 'a t
 
   val get_abstract_solver : 'a t -> 'a Abstract.Solver.t
 
