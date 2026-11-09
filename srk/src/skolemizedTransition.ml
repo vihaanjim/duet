@@ -53,10 +53,10 @@ module Make
       length_to : int -> int VarMap.t;
       table     : (C.t formula * (int * int) VarMap.t) Pathexpr.Table.t;
       summaries : T.t HT.t;
-      inner     : WeightedGraph.RecGraph.query }
+      query     : WeightedGraph.RecGraph.query }
 
   let mk_query ~weight rg v =
-    let inner = WeightedGraph.RecGraph.mk_query rg v in
+    let query = WeightedGraph.RecGraph.mk_query rg v in
     (* Compute the `length` of a path expression. This is simply
        the number of times that each variable is defined in the
        expression *)
@@ -98,7 +98,7 @@ module Make
       end
     in
     let length_query =
-      WeightedGraph.RecGraph.summarize_iterative inner
+      WeightedGraph.RecGraph.summarize_iterative query
         (length_algebra None)
         ~delay:0
         (module LengthAbstractWeight)
@@ -110,8 +110,8 @@ module Make
     in
     let length_to = WeightedGraph.RecGraph.path_weight length_query in
     let summaries = HT.create 991 in
-    { weight; length; length_to; inner; summaries;
-      table = Pathexpr.Table.create 991 }
+    { weight; length; length_to; query; summaries;
+      table = Pathexpr.Table.create 991; }
 
   let srk = C.context
 
@@ -295,7 +295,7 @@ module Make
       HT.replace query.summaries call weight
     in
     let summarize call =
-      let pe = RG.call_pathexpr query.inner call
+      let pe = RG.call_pathexpr query.query call
                |> Pathexpr.promote in
       if not (CallSet.is_empty !changed) then
         Pathexpr.Table.forget query.table (fun u v ->
@@ -307,7 +307,7 @@ module Make
       transition query pe
       |> T.exists Var.is_global
     in
-    let callgraph = RG.mk_callgraph query.inner in
+    let callgraph = RG.mk_callgraph query.query in
     let abstract_summaries = HT.create 991 in
     (* stabilize summaries within a WTO component, and add to unstable
        all calls whose summary (may have) changed as a result. *)
@@ -346,14 +346,31 @@ module Make
     query
 
   let path_weight query tgt =
-    WeightedGraph.RecGraph.pathexpr query.inner tgt
+    WeightedGraph.RecGraph.pathexpr query.query tgt
     |> transition query
 
   let call_weight query call =
-    WeightedGraph.RecGraph.call_pathexpr query.inner call
+    WeightedGraph.RecGraph.call_pathexpr query.query call
     |> Pathexpr.promote
     |> transition query
 
-  let omega_path_weight _ _ = assert false
+  let omega_path_weight query omega_algebra =
+    let omega_table = Pathexpr.OmegaTable.create 991 in
+    let paths = WeightedGraph.RecGraph.omega_pathexpr query.query in
+    let rec f_omega oe =
+      if Pathexpr.OmegaTable.mem omega_table oe then
+        Pathexpr.OmegaTable.find omega_table oe
+      else
+        let res =
+          begin match Pathexpr.destruct_omega oe with
+          | `Omega pe -> `Omega (transition query pe)
+          | `Mul (pe, oe') -> `Mul (transition query pe, f_omega oe')
+          | `Add (oe1, oe2) -> `Add (f_omega oe1, f_omega oe2)
+          end |> omega_algebra
+        in
+        Pathexpr.OmegaTable.add omega_table oe res ;
+        res
+    in
+    f_omega paths
 
 end

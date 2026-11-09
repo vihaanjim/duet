@@ -103,8 +103,7 @@ let mk_omega pe x = match x.obj with
 let mk_omega_add = mk_add
 let mk_omega_mul = mk_mul
 
-let destruct pe =
-  match pe.obj with
+let destruct pe = match pe.obj with
   | Edge (u, v) -> `Edge (u, v)
   | Mul (p1, p2) -> `Mul (p1, p2)
   | Add (p1, p2) -> `Add (p1, p2)
@@ -113,6 +112,13 @@ let destruct pe =
   | One -> `One
   | Zero -> `Zero
   | Omega _ -> assert false
+
+let destruct_omega x = match x.obj with
+  | Omega pe -> `Omega pe
+  | Mul (pe, x') -> `Mul (pe, x')
+  | Add (x1, x2) -> `Add (x1, x2)
+  | Zero -> `Omega x
+  | _ -> assert false
 
 let promote x = x
 let promote_omega x = x
@@ -229,6 +235,8 @@ module Table = struct
   include HT
   let forget = forget
 end
+
+module OmegaTable = HT
 
 let rec accept_epsilon p =
   match p.obj with

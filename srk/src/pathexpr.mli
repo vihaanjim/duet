@@ -140,3 +140,11 @@ val eval_omega : ?table:(('a,'b) omega_table) ->
                  omega_algebra:(('a,'b) omega_algebra) ->
                  nested omega ->
                  'b
+
+(** Explicit hash table *)
+module OmegaTable : sig
+  include BatHashtbl.S with type key = nested omega
+end
+
+(** Destruct one layer of the path expression *)
+val destruct_omega : 'a omega -> ('a t, 'a omega) open_omega_pathexpr
