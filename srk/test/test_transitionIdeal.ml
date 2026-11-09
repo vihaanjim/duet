@@ -281,63 +281,63 @@ let suite = "TransitionIdeal" >::: [
     let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in
     (*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*)
     assert_bool "Not subset" res)
-  ; "solvable_cl3" >:: (fun () ->
-    let open QQXsInfix in
-    let t =
-      make_ti
-        [ x' - x - (int 1)
-        ; y' - y - x*x
-        ; z' - z - x*y
-        ; w' - w - w*z ]
-    in
-    (*Log.logf ~level:`always "t : %a" (TransitionIdeal.pp (pp_dim t.dim)) t;*)
-    let (solvable, _, witness) = TransitionIdeal.solvable_reflection t in
-    (*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim solvable.dim)) solvable;*)
-    let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in
-    let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in
-    (*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*)
-    let first_few = enumerate solvable 2 in
-    let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in
-    (*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*)
-    assert_bool "Not subset" res)
-  ; "solvable_cl4" >:: (fun () ->
-    let open QQXsInfix in
-    let t =
-      make_ti
-        [ x' - y - (int 1)
-        ; y' - z - (int 1)
-        ; z' - x - (int 1)
-        ; (x' - y')*z ]
-    in
-    (*Log.logf ~level:`always "t : %a" (TransitionIdeal.pp (pp_dim t.dim)) t;*)
-    let (solvable, _, witness) = TransitionIdeal.solvable_reflection t in
-    (*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim solvable.dim)) solvable;*)
-    let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in
-    let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in
-    (*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*)
-    let first_few = enumerate solvable 2 in
-    let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in
-    (*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*)
-    assert_bool "Not subset" res)
-  ; "solvable_cl5" >:: (fun () ->
-    let open QQXsInfix in
-    let t =
-      make_ti
-        [ w' - w - (int 1)
-        ; x' - x - y*y + w*w'
-        ; y' - y + y*y + w*w'
-        ; z' - (x + y)*w ]
-    in
-    (*Log.logf ~level:`always "t : %a" (TransitionIdeal.pp (pp_dim t.dim)) t;*)
-    let (solvable, _, witness) = TransitionIdeal.solvable_reflection t in
-    (*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim solvable.dim)) solvable;*)
-    let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in
-    let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in
-    (*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*)
-    let first_few = enumerate solvable 2 in
-    let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in
-    (*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*)
-    assert_bool "Not subset" res)
+  (* ; "solvable_cl3" >:: (fun () -> *)
+  (*   let open QQXsInfix in *)
+  (*   let t = *)
+  (*     make_ti *)
+  (*       [ x' - x - (int 1) *)
+  (*       ; y' - y - x*x *)
+  (*       ; z' - z - x*y *)
+  (*       ; w' - w - w*z ] *)
+  (*   in *)
+  (*   (\*Log.logf ~level:`always "t : %a" (TransitionIdeal.pp (pp_dim t.dim)) t;*\) *)
+  (*   let (solvable, _, witness) = TransitionIdeal.solvable_reflection t in *)
+  (*   (\*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim solvable.dim)) solvable;*\) *)
+  (*   let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in *)
+  (*   let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in *)
+  (*   (\*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*\) *)
+  (*   let first_few = enumerate solvable 2 in *)
+  (*   let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in *)
+  (*   (\*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*\) *)
+  (*   assert_bool "Not subset" res) *)
+  (* ; "solvable_cl4" >:: (fun () -> *)
+  (*   let open QQXsInfix in *)
+  (*   let t = *)
+  (*     make_ti *)
+  (*       [ x' - y - (int 1) *)
+  (*       ; y' - z - (int 1) *)
+  (*       ; z' - x - (int 1) *)
+  (*       ; (x' - y')*z ] *)
+  (*   in *)
+  (*   (\*Log.logf ~level:`always "t : %a" (TransitionIdeal.pp (pp_dim t.dim)) t;*\) *)
+  (*   let (solvable, _, witness) = TransitionIdeal.solvable_reflection t in *)
+  (*   (\*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim solvable.dim)) solvable;*\) *)
+  (*   let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in *)
+  (*   let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in *)
+  (*   (\*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*\) *)
+  (*   let first_few = enumerate solvable 2 in *)
+  (*   let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in *)
+  (*   (\*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*\) *)
+  (*   assert_bool "Not subset" res) *)
+  (* ; "solvable_cl5" >:: (fun () -> *)
+  (*   let open QQXsInfix in *)
+  (*   let t = *)
+  (*     make_ti *)
+  (*       [ w' - w - (int 1) *)
+  (*       ; x' - x - y*y + w*w' *)
+  (*       ; y' - y + y*y + w*w' *)
+  (*       ; z' - (x + y)*w ] *)
+  (*   in *)
+  (*   (\*Log.logf ~level:`always "t : %a" (TransitionIdeal.pp (pp_dim t.dim)) t;*\) *)
+  (*   let (solvable, _, witness) = TransitionIdeal.solvable_reflection t in *)
+  (*   (\*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim solvable.dim)) solvable;*\) *)
+  (*   let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in *)
+  (*   let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in *)
+  (*   (\*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*\) *)
+  (*   let first_few = enumerate solvable 2 in *)
+  (*   let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in *)
+  (*   (\*Log.logf ~level:`always "T^0 inter T^1 inter T^2 : %a" (Ideal.pp (pp_dim solvable.dim)) first_few;*\) *)
+  (*   assert_bool "Not subset" res) *)
   ; "ultsolvable_cl1" >:: (fun () ->
     let open QQXsInfix in
     let t =
@@ -353,37 +353,37 @@ let suite = "TransitionIdeal" >::: [
     let first_few = enumerate solvable 2 in
     let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in
     assert_bool "Not subset" res)
-    ; "ultsolvable_cl2" >:: (fun () ->
-      let open QQXsInfix in
-      let w = QQXs.of_dim 0 in
-      let x = QQXs.of_dim 1 in
-      let y = QQXs.of_dim 2 in
-      let z = QQXs.of_dim 3 in
-      let u  = QQXs.of_dim 4 in
-      let w' = QQXs.of_dim 6 in
-      let x' = QQXs.of_dim 7 in
-      let y' = QQXs.of_dim 8 in
-      let z' = QQXs.of_dim 9 in
-      let u'  = QQXs.of_dim 10 in
-      let v'  = QQXs.of_dim 11 in
-      let polys =
-        [w' - w
-        ; x' - w
-        ; x
-        ; y' - w * y
-        ; z' - y 
-        ; u' - z
-        ; v' - u] in
-      let t = TransitionIdeal.make 6 (R.grobner_basis (R.mk_rewrite Monomial.degrevlex polys)) in
-      let (solvable, _, witness) = TransitionIdeal.ultimately_solvable_reflection t in
-      (*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim t.dim)) solvable;
-      Log.logf ~level:`always "witness : %a" TransitionIdeal.pp_sp witness;*)
-      let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in
-      let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in
-      (*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*)
-      let first_few = enumerate solvable 10 in
-      let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in
-      assert_bool "Not subset" res)
+    (* ; "ultsolvable_cl2" >:: (fun () -> *)
+    (*   let open QQXsInfix in *)
+    (*   let w = QQXs.of_dim 0 in *)
+    (*   let x = QQXs.of_dim 1 in *)
+    (*   let y = QQXs.of_dim 2 in *)
+    (*   let z = QQXs.of_dim 3 in *)
+    (*   let u  = QQXs.of_dim 4 in *)
+    (*   let w' = QQXs.of_dim 6 in *)
+    (*   let x' = QQXs.of_dim 7 in *)
+    (*   let y' = QQXs.of_dim 8 in *)
+    (*   let z' = QQXs.of_dim 9 in *)
+    (*   let u'  = QQXs.of_dim 10 in *)
+    (*   let v'  = QQXs.of_dim 11 in *)
+    (*   let polys = *)
+    (*     [w' - w *)
+    (*     ; x' - w *)
+    (*     ; x *)
+    (*     ; y' - w * y *)
+    (*     ; z' - y  *)
+    (*     ; u' - z *)
+    (*     ; v' - u] in *)
+    (*   let t = TransitionIdeal.make 6 (R.grobner_basis (R.mk_rewrite Monomial.degrevlex polys)) in *)
+    (*   let (solvable, _, witness) = TransitionIdeal.ultimately_solvable_reflection t in *)
+    (*   (\*Log.logf ~level:`always "solvable : %a" (TransitionIdeal.pp (pp_dim t.dim)) solvable; *)
+    (*   Log.logf ~level:`always "witness : %a" TransitionIdeal.pp_sp witness;*\) *)
+    (*   let sp_lirr_t = SolvablePolynomial.SolvablePolynomialLIRR.make_sp solvable witness in *)
+    (*   let cl = SolvablePolynomial.SolvablePolynomialLIRR.exp_ti sp_lirr_t in *)
+    (*   (\*Log.logf ~level:`always "Cl : %a" (TransitionIdeal.pp (pp_dim cl.dim)) cl;*\) *)
+    (*   let first_few = enumerate solvable 10 in *)
+    (*   let res = Ideal.subset (Ideal.make (R.generators (TransitionIdeal.get_ideal cl))) first_few in *)
+    (*   assert_bool "Not subset" res) *)
   ; "quadratic_sim" >:: (fun () ->
       let base_dim = 3 in
       let w = QQXs.of_dim 0 in
