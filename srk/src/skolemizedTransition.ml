@@ -60,7 +60,7 @@ module Make
     (* Compute the `length` of a path expression. This is simply
        the number of times that each variable is defined in the
        expression *)
-    let length_algebra weight_query =
+    let length_algebra =
       let union f = VarMap.union (fun _ a b -> Some (f a b)) in
       function
       | `Edge (u, v) ->
@@ -73,9 +73,7 @@ module Make
                  VarMap.empty
                  (T.defines tr))
               (T.uses tr)
-         | Call (en,ex) ->
-            WeightedGraph.RecGraph.get_summary
-              (Option.get weight_query) (en,ex)
+         | Call _ -> assert false
          end
       | `Mul (l1, l2) -> union (+) l1 l2
       | `Add (l1, l2) -> union Stdlib.Int.max l1 l2
@@ -99,18 +97,14 @@ module Make
     in
     let length_query =
       WeightedGraph.RecGraph.summarize_iterative query
-        (length_algebra None)
+        length_algebra
         ~delay:0
         (module LengthAbstractWeight)
     in
-    let length = 
-        let algebra = length_algebra (Some length_query) in
-        let table = Pathexpr.mk_table () in
-        Pathexpr.eval_nested ~table ~algebra
-    in
-    let length_to = WeightedGraph.RecGraph.path_weight length_query in
-    let summaries = HT.create 991 in
-    { weight; length; length_to; query; summaries;
+    { weight; query;
+      length = WeightedGraph.RecGraph.expr_weight length_query;
+      length_to = WeightedGraph.RecGraph.path_weight length_query;
+      summaries = HT.create 991;
       table = Pathexpr.Table.create 991; }
 
   let srk = C.context
