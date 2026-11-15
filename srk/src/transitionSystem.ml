@@ -45,6 +45,7 @@ module Make
        val one : t
        val star : t -> t
        val exists : (var -> bool) -> t -> t
+       val domain : (C.t Iteration.exp_op) ref
      end)
 = struct
 

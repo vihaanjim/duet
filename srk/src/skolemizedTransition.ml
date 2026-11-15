@@ -27,11 +27,11 @@ module Make
        val uses : t -> var list
        val zero : t
        val one : t
-       val star : t -> t
        val exists : (Var.t -> bool) -> t -> t
+       val domain : (C.t Iteration.exp_op) ref
      end)
 = struct
-
+  
   module VarMap = BatMap.Make(Var)
   module VarSet = BatSet.Make(Var)
 
@@ -40,8 +40,74 @@ module Make
     let equal (x,y) (x',y') = (x=x' && y=y')
     let hash = Hashtbl.hash
   end
-  module HT = BatHashtbl.Make(IntPair)
+  module CallTable = BatHashtbl.Make(IntPair)
   module CallSet = BatSet.Make(IntPair)
+
+  let srk = C.context
+
+  (* Canonical name for the ith version of a variable *)
+  let (var_i_symbol, _get_var_i) =
+    let module HT = BatHashtbl.Make(Int) in
+    let var_i = HT.create 991 in
+    (Memo.memo (fun (v, i) ->
+         let sym = 
+           if i = 0 then Var.symbol_of v
+           else
+             mk_symbol srk
+               ~name:(Var.show v ^ string_of_int i)
+               (Var.typ v :> typ)
+         in
+         HT.add var_i (int_of_symbol sym) (v, i) ;
+         sym),
+     (fun s -> HT.find_opt var_i (int_of_symbol s)))
+  let ith_copy i v = mk_const srk (var_i_symbol (v, i))
+
+  (* Signature for an abstract formula *)
+  module type Formula = sig
+    type context
+    type t
+
+    val mk_context : C.t Syntax.context -> context
+    val of_concrete : context -> C.t formula -> t
+    val to_concrete : context -> t -> C.t formula
+    val mk_false : context -> t
+    (* val mk_true : context -> t *)
+    val mk_and : context -> t list -> t
+    val mk_or : context -> t list -> t
+    val star : context -> t -> (symbol * symbol) list -> C.t formula
+  end
+
+  (* Default formula implementation *)
+  module ConcreteFormula : Formula = struct
+    type context = C.t Syntax.context
+    type t = C.t formula
+    
+    let mk_context srk = srk
+    let of_concrete _ f = f
+    let to_concrete _ f = f
+    let mk_false srk = mk_false srk
+    (* let mk_true srk = mk_false srk *)
+    let mk_and srk l = mk_and srk l
+    let mk_or srk l = mk_or srk l
+    let star srk f symbols =
+      let symbol_set =
+        List.fold_left
+          (fun set (pre, post) ->
+            set |> Symbol.Set.add pre |> Symbol.Set.add post)
+          Symbol.Set.empty
+          symbols
+      in
+      (* Filter out symbols with same pre/post value *)
+      let symbols = List.filter (fun (l, u) -> l <> u) symbols in
+      let exists sym = Symbol.Set.mem sym symbol_set in
+      logf ~level:`warn "Approximating transitive closure:@.  @[<v 0>%a@]" (Formula.pp srk) f;
+      let tf = TransitionFormula.make ~exists f symbols in
+      let closure = Iteration.closure !(T.domain) (Iteration.Solver.make srk tf) in
+      logf ~level:`warn "Approx TC:@.  @[<v 0>%a@]" (Formula.pp srk) closure;
+      closure
+  end
+
+  module F = ConcreteFormula
 
   type edge_weight =
     | Transition of T.t
@@ -51,9 +117,10 @@ module Make
     { weight    : int -> int -> edge_weight;
       length    : Pathexpr.nested Pathexpr.t -> int VarMap.t;
       length_to : int -> int VarMap.t;
-      table     : (C.t formula * (int * int) VarMap.t) Pathexpr.Table.t;
-      summaries : T.t HT.t;
-      query     : WeightedGraph.RecGraph.query }
+      table     : (F.t * (int * int) VarMap.t) Pathexpr.Table.t;
+      summaries : T.t CallTable.t;
+      query     : WeightedGraph.RecGraph.query;
+      ctxt      : F.context }
 
   let mk_query ~weight rg v =
     let query = WeightedGraph.RecGraph.mk_query rg v in
@@ -101,23 +168,11 @@ module Make
         ~delay:0
         (module LengthAbstractWeight)
     in
-    { weight; query;
+    { weight; query; ctxt = F.mk_context srk;
       length = WeightedGraph.RecGraph.expr_weight length_query;
       length_to = WeightedGraph.RecGraph.path_weight length_query;
-      summaries = HT.create 991;
+      summaries = CallTable.create 991;
       table = Pathexpr.Table.create 991; }
-
-  let srk = C.context
-
-  (* Canonical name for the ith version of a variable *)
-  let var_i_symbol =
-    Memo.memo (fun (v, i) ->
-        if i = 0 then Var.symbol_of v
-        else
-          mk_symbol srk
-            ~name:(Var.show v ^ string_of_int i)
-            (Var.typ v :> typ))
-  let ith_copy i v = mk_const srk (var_i_symbol (v, i))
 
   let of_tr vars tr =
     let subst =
@@ -163,7 +218,7 @@ module Make
         vars
         ([], Symbol.Map.empty)
     in
-    T.construct (substitute_map srk subst (phi)) transform
+    T.construct (substitute_map srk subst phi) transform
 
   let rec f q pe vars =
     (* Printf.printf "%s(%d-%d) %s\n" (VarMap.choose vars |> fst |> Var.show) (VarMap.choose vars |> snd |> fst) (VarMap.choose vars |> snd |> snd) (Pathexpr.show pe) ; *)
@@ -183,16 +238,17 @@ module Make
       in
       if VarMap.is_empty disagreements then phi
       else
-        let _ = Log.logf ~level:`warn "Irreducible program flow" in
-        to_tr vars' phi |> of_tr vars
+        let _ = logf ~level:`warn "Irreducible program flow" in
+        to_tr vars' (F.to_concrete q.ctxt phi) |> of_tr vars |> F.of_concrete q.ctxt
     else
       let res =
         match Pathexpr.destruct pe with
         | `Edge (u, v) ->
            begin match q.weight u v with
            | Transition tr -> tr
-           | Call (en,ex) -> HT.find q.summaries (en,ex)
-           end |> of_tr vars
+           | Call (en,ex) -> CallTable.find q.summaries (en,ex)
+           end
+           |> of_tr vars |> F.of_concrete q.ctxt
         | `Mul (left, right) ->
            let left_vars =
              VarMap.merge (fun _ lu d ->
@@ -209,18 +265,39 @@ module Make
                  | _ -> None)
                vars (q.length left)
            in
-           mk_and srk [f q left left_vars ; f q right right_vars]
+           F.mk_and q.ctxt [f q left left_vars ; f q right right_vars]
         | `Add (left, right) ->
-           mk_or srk [f q left vars ; f q right vars]
+           F.mk_or q.ctxt [f q left vars ; f q right vars]
         | `Star pe' ->
            let len = q.length pe' in
-           let vars' =
-             VarMap.mapi (fun v (l, u) ->
+           let (vars', prepost, subst) =
+             VarMap.fold (fun v (l, u) (vars', prepost, subst) ->
+                 logf ~level:`warn "%s: (%d, %d)" (Var.show v) l u ;
                  let d = VarMap.find_default 0 v len in
-                 if d = 0 then (l, u) else (l+1, l+1+d))
+                 let (l', u') = if d = 0 then (l, u) else (l+1, l+1+d) in
+                 (VarMap.add v (l', u') vars',
+                  ((var_i_symbol (v, l')), (var_i_symbol (v, u'))) :: prepost,
+                  Symbol.Map.add (var_i_symbol (v, l')) (ith_copy l v) subst
+                  |> Symbol.Map.add (var_i_symbol (v, u')) (ith_copy u v))
+               )
                vars
+               (VarMap.empty, [], Symbol.Map.empty)
            in
-           f q pe' vars' |> to_tr vars' |> T.star |> of_tr vars
+           let phi = f q pe' vars' in
+           let fresh_skolem =
+             Memo.memo (fun sym ->
+                 let name = show_symbol srk sym in
+                 let typ = typ_symbol srk sym in
+                 mk_const srk (mk_symbol srk ~name typ))
+           in
+           let sigma s =
+             match Symbol.Map.find_opt s subst with
+             | Some t -> t
+             | None -> fresh_skolem s
+           in
+           F.star q.ctxt phi prepost
+           |> substitute_const srk sigma
+           |> F.of_concrete q.ctxt
         | `Segment pe' ->
            let vars' =
              VarMap.merge (fun _ lu d ->
@@ -231,16 +308,18 @@ module Make
                vars
                (q.length pe')
            in
-           f q pe' vars' |> to_tr vars' |> T.exists Var.is_global
-           |> of_tr vars
+           (* We can just return the formula as-is. Non-global
+              variables are implicitly left out by `length'. *)
+           f q pe' vars'
         | `One ->
            VarMap.fold (fun var (l, u) lst ->
                if l <> u then
-                 (mk_eq srk (ith_copy l var) (ith_copy u var))::lst
+                 (mk_eq srk (ith_copy l var) (ith_copy u var)
+                  |> F.of_concrete q.ctxt)::lst
                else lst)
              vars []
-           |> mk_and srk
-        | `Zero -> mk_false srk
+           |> F.mk_and q.ctxt
+        | `Zero -> F.mk_false q.ctxt
       in
       Pathexpr.Table.add q.table pe (res, vars) ;
       (* Printf.printf "%s:\n %s\n\n" (Pathexpr.show pe) (Formula.show srk res) ; *)
@@ -274,7 +353,7 @@ module Make
                 Some (l, l + d))
            pre (q.length pe)
        in
-       f q pe vars |> to_tr vars
+       f q pe vars |> F.to_concrete q.ctxt |> to_tr vars
 
   let summarize_iterative
         ~weight rg v
@@ -286,7 +365,7 @@ module Make
     let changed = ref CallSet.empty in
     let set_summary call weight =
       changed := CallSet.add call !changed;
-      HT.replace query.summaries call weight
+      CallTable.replace query.summaries call weight
     in
     let summarize call =
       let pe = RG.call_pathexpr query.query call
@@ -302,7 +381,7 @@ module Make
       |> T.exists Var.is_global
     in
     let callgraph = RG.mk_callgraph query.query in
-    let abstract_summaries = HT.create 991 in
+    let abstract_summaries = CallTable.create 991 in
     (* stabilize summaries within a WTO component, and add to unstable
        all calls whose summary (may have) changed as a result. *)
     let rec fix = function
@@ -312,7 +391,7 @@ module Make
       | `Loop loop ->
          let header = RG.CallGraphLoop.header loop in
          let rec fix_component delay =
-           let old_abs_weight = HT.find abstract_summaries header in
+           let old_abs_weight = CallTable.find abstract_summaries header in
            let (new_abs_weight, new_weight) =
              let new_weight = summarize header in
              let new_abs_weight = A.abstract new_weight in
@@ -323,7 +402,7 @@ module Make
                let new_weight = A.concretize new_abs_weight in
                (new_abs_weight, new_weight)
            in
-           HT.replace abstract_summaries header new_abs_weight;
+           CallTable.replace abstract_summaries header new_abs_weight;
            set_summary header new_weight;
            List.iter fix (RG.CallGraphLoop.children loop);
            if not (A.equal old_abs_weight new_abs_weight)
@@ -335,7 +414,7 @@ module Make
     callgraph
     |> RG.CallGraph.iter_vertex (fun call ->
            set_summary call T.zero;
-           HT.add abstract_summaries call abstract_zero);
+           CallTable.add abstract_summaries call abstract_zero);
     List.iter fix (RG.CallGraphLoop.loop_nest callgraph);
     query
 

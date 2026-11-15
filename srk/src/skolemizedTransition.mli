@@ -27,6 +27,7 @@ module Make
        val one : t
        val star : t -> t
        val exists : (Var.t -> bool) -> t -> t
+       val domain : (C.t Iteration.exp_op) ref
      end) : sig
 
   type query
