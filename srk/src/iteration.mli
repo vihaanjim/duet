@@ -15,6 +15,12 @@ module Solver : sig
   val get_formula : 'a t -> 'a formula
 
   val get_symbols : 'a t -> (symbol * symbol) list
+
+  (** [with_symbols s symbols] returns a modified version of [s] where
+      transition symbols are [symbols], and symbolic/skolem constants
+      are decided by [exists]. [s] itself remains unchanged. *)
+  val with_symbols : 'a t -> ?exists:(symbol -> bool) -> (symbol * symbol) list -> 'a t
+
   val get_constants : 'a t -> Symbol.Set.t
 
   val get_transition_formula : 'a t -> 'a TransitionFormula.t
@@ -36,12 +42,12 @@ module Solver : sig
      with the solver. *)
   val add : 'a t -> ('a formula) list -> unit
 
-  (** [add_assumptions s bs] returns a modified version of [s] with
-      the added assumption literals [bs]. The resulting solver is
+  (** [with_added_assumptions s bs] returns a modified version of [s]
+      with the added assumption literals [bs]. The resulting solver is
       equivalent to if you had performed [add s bs]. However, by
       retaining the unmodified version of [s], you can get the
       original state back without clobbering learned clauses. *)
-  val add_assumptions : 'a t -> 'a formula list -> 'a t
+  val with_added_assumptions : 'a t -> 'a formula list -> 'a t
 
   (** Push a fresh entry onto the solver's stack.  Assertions added to the
      formula with [add] are reverted after the entry is [pop]ed off the
@@ -148,7 +154,7 @@ val phase_mp : 'a context ->
 
 val product : 'a exp_op list -> 'a exp_op
 
-val closure : ?assumptions:('a formula list) -> 'a exp_op -> 'a Solver.t -> 'a formula
+val closure : 'a exp_op -> 'a Solver.t -> 'a formula
 
 val wedge_product : 'a wedge_exp_op list -> 'a wedge_exp_op
 

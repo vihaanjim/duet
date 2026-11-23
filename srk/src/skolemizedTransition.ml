@@ -70,8 +70,6 @@ module Make
     val mk_context : C.t Syntax.context -> context
     val of_concrete : context -> C.t formula -> t
     val to_concrete : context -> t -> C.t formula
-    val mk_false : context -> t
-    (* val mk_true : context -> t *)
     val mk_and : context -> t list -> t
     val mk_or : context -> t list -> t
     val star : context -> t -> (symbol * symbol) list -> C.t formula
@@ -85,8 +83,6 @@ module Make
     let mk_context srk = srk
     let of_concrete _ f = f
     let to_concrete _ f = f
-    let mk_false srk = mk_false srk
-    (* let mk_true srk = mk_false srk *)
     let mk_and srk l = mk_and srk l
     let mk_or srk l = mk_or srk l
     let star srk f symbols =
@@ -97,9 +93,9 @@ module Make
           Symbol.Set.empty
           symbols
       in
+      let exists sym = Symbol.Set.mem sym symbol_set in
       (* Filter out symbols with same pre/post value *)
       let symbols = List.filter (fun (l, u) -> l <> u) symbols in
-      let exists sym = Symbol.Set.mem sym symbol_set in
       logf ~level:`warn "Approximating transitive closure:@.  @[<v 0>%a@]" (Formula.pp srk) f;
       let tf = TransitionFormula.make ~exists f symbols in
       let closure = Iteration.closure !(T.domain) (Iteration.Solver.make srk tf) in
@@ -107,7 +103,64 @@ module Make
       closure
   end
 
-  module F = ConcreteFormula
+  (* Assumption literal implementation *)
+  module AssumptionLiteralFormula : Formula = struct
+    type context = { srk: C.t Syntax.context ; solver: C.t Iteration.Solver.t }
+
+    (* Actually, this is specifically an assumption literal. *)
+    type t = C.t formula
+
+    let mk_context srk =
+      let tru = TransitionFormula.identity srk [] in
+      { srk; solver = Iteration.Solver.make srk tru }
+
+    let new_literal ctxt =
+      mk_symbol ctxt.srk ~name:"b" `TyBool
+      |> mk_const ctxt.srk
+
+    let of_concrete ctxt f =
+      let b = new_literal ctxt in
+      let imp = mk_if ctxt.srk b f in
+      Iteration.Solver.add ctxt.solver [imp] ;
+      b
+
+    let to_concrete ctxt b =
+      (* todo: get smaller formula? *)
+      mk_and ctxt.srk [b; Iteration.Solver.get_formula ctxt.solver]
+
+    let mk_and ctxt l =
+      let conj = mk_and ctxt.srk l in
+      of_concrete ctxt conj
+
+    let mk_or ctxt l =
+      let disj = mk_or ctxt.srk l in
+      of_concrete ctxt disj
+
+    let star ctxt b symbols =
+      let symbol_set =
+        List.fold_left
+          (fun set (pre, post) ->
+            set |> Symbol.Set.add pre |> Symbol.Set.add post)
+          Symbol.Set.empty
+          symbols
+      in
+      let exists sym = Symbol.Set.mem sym symbol_set in
+      (* Filter out symbols with same pre/post value *)
+      let symbols = List.filter (fun (l, u) -> l <> u) symbols in
+      (* add the assumption literal for this formula *)
+      let solver = Iteration.Solver.with_added_assumptions ctxt.solver [b] in
+      let solver = Iteration.Solver.with_symbols solver ~exists symbols in
+      (* compute the closure *)
+      logf ~level:`warn
+        "Approximating transitive closure:@.  @[<v 0>%a@]"
+        (Formula.pp srk) (to_concrete ctxt b);
+      let closure = Iteration.closure !(T.domain) solver in
+      logf ~level:`warn "Approx TC:@.  @[<v 0>%a@]" (Formula.pp srk) closure;
+      closure
+
+  end
+
+  module F = AssumptionLiteralFormula
 
   type edge_weight =
     | Transition of T.t
@@ -221,7 +274,6 @@ module Make
     T.construct (substitute_map srk subst phi) transform
 
   let rec f q pe vars =
-    (* Printf.printf "%s(%d-%d) %s\n" (VarMap.choose vars |> fst |> Var.show) (VarMap.choose vars |> snd |> fst) (VarMap.choose vars |> snd |> snd) (Pathexpr.show pe) ; *)
     if Pathexpr.Table.mem q.table pe then
       let (phi, vars') = Pathexpr.Table.find q.table pe in
       (* Check if the variables disgree in any place. It's alright if
@@ -319,10 +371,9 @@ module Make
                else lst)
              vars []
            |> F.mk_and q.ctxt
-        | `Zero -> F.mk_false q.ctxt
+        | `Zero -> F.of_concrete q.ctxt (mk_false srk)
       in
       Pathexpr.Table.add q.table pe (res, vars) ;
-      (* Printf.printf "%s:\n %s\n\n" (Pathexpr.show pe) (Formula.show srk res) ; *)
       res
 
   let src =

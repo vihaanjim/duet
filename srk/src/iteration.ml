@@ -34,9 +34,13 @@ module Solver = struct
 
   let get_context s = Abstract.Solver.get_context s.solver
 
-  let get_formula s = mk_and (get_context s) (A.last s.stack)
+  let get_formula s = mk_and (get_context s) (s.default_assumptions @ A.last s.stack)
 
   let get_symbols s = s.symbols
+
+  let with_symbols s ?(exists=fun _ -> true) symbols =
+    let tf = TF.make ~exists (get_formula s) symbols in
+    { s with symbols ; constants = TF.symbolic_constants tf }
 
   let get_constants s = s.constants
 
@@ -71,15 +75,15 @@ module Solver = struct
     Abstract.Solver.add s.solver formulas;
     A.upd s.stack (A.length s.stack - 1) (fun xs -> formulas@xs)
 
-  let add_assumptions s assumptions =
+  let with_added_assumptions s assumptions =
     { s with default_assumptions = assumptions @ s.default_assumptions }
 
   let check ?(assumptions=[]) s =
-    let assumptions = s.default_assumptions @ assumptions in
+    let assumptions = assumptions @ s.default_assumptions in
     Abstract.Solver.check ~assumptions s.solver
 
   let get_model ?(assumptions=[]) s =
-    let assumptions = s.default_assumptions @ assumptions in
+    let assumptions = assumptions @ s.default_assumptions in
     Abstract.Solver.get_model ~assumptions s.solver
 
   let abstract s = Abstract.Solver.abstract s.solver
@@ -128,14 +132,12 @@ module type WedgeDomain = sig
   val wedge_exp : 'a wedge_exp_op
 end
 
-let closure ?(assumptions=[]) exp solver =
+let closure exp solver =
   let srk = Solver.get_context solver in
   let loop_counter_sym = mk_symbol srk ~name:"K" `TyInt in
   let loop_counter = mk_const srk loop_counter_sym in
-  (* TODO: remove hack! *)
-  let solver = Solver.add_assumptions solver assumptions in
-  let phi = exp solver loop_counter in
-  mk_and srk [ phi ; mk_leq srk (mk_zero srk) loop_counter]
+  mk_and srk [ exp solver loop_counter ;
+               mk_leq srk (mk_zero srk) loop_counter]
 
 let product exps solver loop_counter =
   List.map (fun exp -> exp solver loop_counter) exps
@@ -734,6 +736,12 @@ let split exp solver loop_counter =
     exp solver loop_counter
   | _ -> mk_and srk split_iter
 
+(* Create a midpoint symbol, or return sym if sym = sym' *)
+let mid_symbol srk (sym, sym') =
+  if sym = sym' then sym
+  else
+    let mid_name = "mid_" ^ (show_symbol srk sym) in
+    mk_symbol srk ~name:mid_name (typ_symbol srk sym)
 
 (* A transition p(x,x') predicate is invariant for a transition relation T(x,x') if
    T(x,x') /\ T(x',x'') /\ p(x,x') |= p(x',x'')
@@ -743,11 +751,7 @@ let invariant_transition_predicates srk tf predicates =
   (* map' sends primed vars to midpoints; map sends unprimed vars to midpoints *)
   let (map', map) =
     List.fold_left (fun (subst1, subst2) (sym, sym') ->
-        let mid_name = "mid_" ^ (show_symbol srk sym) in
-        let mid_symbol =
-          mk_symbol srk ~name:mid_name (typ_symbol srk sym)
-        in
-        let mid = mk_const srk mid_symbol in
+        let mid = mk_const srk (mid_symbol srk (sym, sym')) in
         (Symbol.Map.add sym' mid subst1,
          Symbol.Map.add sym mid subst2))
       (Symbol.Map.empty, Symbol.Map.empty)
@@ -861,11 +865,7 @@ let phase_graph srk tf candidates algebra =
   logf "start building phase transition graph";
   let (map', map) =
     List.fold_left (fun (subst1, subst2) (sym, sym') ->
-        let mid_name = "mid_" ^ (show_symbol srk sym) in
-        let mid_symbol =
-          mk_symbol srk ~name:mid_name (typ_symbol srk sym)
-        in
-        let mid = mk_const srk mid_symbol in
+        let mid = mk_const srk (mid_symbol srk (sym, sym')) in
         (Symbol.Map.add sym' mid subst1,
          Symbol.Map.add sym mid subst2))
       (Symbol.Map.empty, Symbol.Map.empty)
@@ -1097,12 +1097,7 @@ let invariant_direction exp solver loop_counter =
       ((exp_group tr_symbols k x)::exp_formulas,
        k::loop_counters)
     | (x::xs) ->
-      let mid =
-        List.map (fun (sym, _) ->
-            let name = "mid_" ^ (show_symbol srk sym) in
-            mk_symbol srk ~name:name (typ_symbol srk sym))
-          tr_symbols
-      in
+      let mid = List.map (mid_symbol srk) tr_symbols in
       let tr_symbols1 =
         BatList.map2 (fun (sym, _) sym' -> (sym, sym')) tr_symbols mid
       in
